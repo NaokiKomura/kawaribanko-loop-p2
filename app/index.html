@@ -3,32 +3,52 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>かわりばんこ</title>
-  <style>
-    body {
-      font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
-      background: #faf7f2;
-      color: #1a1a1a;
-      display: grid;
-      place-items: center;
-      min-height: 100vh;
-      margin: 0;
-    }
-    main { text-align: center; max-width: 34rem; padding: 2rem; }
-    h1 { font-size: 2rem; margin-bottom: .5rem; }
-    p { color: #6b6560; line-height: 1.8; }
-    code { background: #efe9e1; border-radius: 4px; padding: .1em .4em; }
-  </style>
+  <meta name="theme-color" content="#d95f45" />
+  <title>かわりばんこ — 開発チームの交換日記</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <main>
-    <h1>かわりばんこ</h1>
-    <p>
-      開発チームの交換日記。<br />
-      まだ実装されていません。<br /><br />
-      開発担当が <code>docs/product-brief.md</code> に従ってここを作り、<br />
-      3人が <code>data/diary.json</code> に日記を書き溜めていきます。
-    </p>
+  <main class="page-shell">
+    <header class="hero" aria-labelledby="diary-title">
+      <p class="eyebrow">DEVELOPMENT TEAM · SHARED DIARY</p>
+      <h1 id="diary-title">かわりばんこ</h1>
+      <p id="diary-subtitle" class="subtitle">日記を開いています…</p>
+      <div id="member-list" class="members" aria-label="この日記の書き手"></div>
+    </header>
+
+    <section class="toolbar" aria-label="日記の表示設定">
+      <div>
+        <p class="section-label">読む</p>
+        <h2>みんなのページ</h2>
+      </div>
+      <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
+    </section>
+
+    <section aria-live="polite" aria-busy="true">
+      <p id="status" class="status">日記を読み込んでいます…</p>
+      <ol id="entries" class="entries" aria-label="日記のエントリ"></ol>
+    </section>
+
+    <template id="entry-template">
+      <li class="entry">
+        <article>
+          <div class="entry-marker" aria-hidden="true"></div>
+          <div class="entry-content">
+            <header class="entry-header">
+              <p class="entry-meta"></p>
+              <p class="entry-date"></p>
+            </header>
+            <p class="entry-mood" aria-label="今日の気分"></p>
+            <h3></h3>
+            <div class="entry-body"></div>
+            <p class="reply-note" hidden></p>
+          </div>
+        </article>
+      </li>
+    </template>
+
+    <noscript><p class="status error">この日記を読むには JavaScript を有効にしてください。</p></noscript>
   </main>
+  <script src="app.js"></script>
 </body>
 </html>
