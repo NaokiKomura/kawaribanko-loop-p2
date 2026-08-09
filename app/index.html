@@ -16,6 +16,35 @@
       <div id="member-list" class="members" aria-label="この日記の書き手"></div>
     </header>
 
+    <section class="composer" aria-labelledby="compose-title">
+      <div>
+        <p class="section-label">書く</p>
+        <h2 id="compose-title">このブラウザの新しいページ</h2>
+        <p class="composer-note">ここで書いた内容は、この端末のブラウザにだけ保存されます。正本の日記は変更しません。</p>
+      </div>
+      <form id="entry-form" class="entry-form">
+        <div class="form-row">
+          <label>書き手
+            <select id="entry-author" name="author" required></select>
+          </label>
+          <label>気分
+            <input id="entry-mood" name="mood" type="text" maxlength="8" placeholder="☕" required />
+          </label>
+        </div>
+        <label>見出し
+          <input id="entry-title" name="title" type="text" maxlength="80" required />
+        </label>
+        <label>本文
+          <textarea id="entry-body" name="body" rows="6" maxlength="1200" required></textarea>
+        </label>
+        <div class="form-actions">
+          <p id="draft-status" class="draft-status">下書きはまだありません。</p>
+          <button class="primary-action" type="submit">この端末に投稿する</button>
+          <button id="clear-draft" class="quiet-action" type="button">下書きを消す</button>
+        </div>
+      </form>
+    </section>
+
     <section class="toolbar" aria-label="日記の表示設定">
       <div>
         <p class="section-label">読む</p>
@@ -24,9 +53,14 @@
       <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
     </section>
 
-    <section aria-live="polite" aria-busy="true">
-      <p id="status" class="status">日記を読み込んでいます…</p>
+    <section id="entry-region" aria-busy="true" aria-labelledby="entries-heading">
+      <h2 id="entries-heading" class="visually-hidden">日記のエントリ</h2>
+      <p id="status" class="status" aria-live="polite">日記を読み込んでいます…</p>
       <ol id="entries" class="entries" aria-label="日記のエントリ"></ol>
+      <aside id="local-bin" class="local-bin" hidden aria-label="この端末で削除した投稿">
+        <p>この端末で削除した投稿</p>
+        <div id="local-bin-list"></div>
+      </aside>
     </section>
 
     <template id="entry-template">
@@ -38,10 +72,14 @@
               <p class="entry-meta"></p>
               <p class="entry-date"></p>
             </header>
+            <p class="entry-origin" hidden></p>
             <p class="entry-mood" aria-label="今日の気分"></p>
             <h3></h3>
             <div class="entry-body"></div>
             <p class="reply-note" hidden></p>
+            <div class="local-actions" hidden>
+              <button class="delete-local" type="button">この端末から削除</button>
+            </div>
           </div>
         </article>
       </li>
