@@ -37,12 +37,30 @@
         <label>本文
           <textarea id="entry-body" name="body" rows="6" maxlength="1200" required></textarea>
         </label>
+        <label>返事を書く相手 <span class="optional">（任意）</span>
+          <select id="entry-reply-to" name="replyTo"></select>
+        </label>
         <div class="form-actions">
           <p id="draft-status" class="draft-status">下書きはまだありません。</p>
           <button class="primary-action" type="submit">この端末に投稿する</button>
           <button id="clear-draft" class="quiet-action" type="button">下書きを消す</button>
         </div>
       </form>
+      <div class="transfer" aria-labelledby="transfer-title">
+        <div>
+          <p class="section-label">渡す</p>
+          <h3 id="transfer-title">この端末のページを持ち運ぶ</h3>
+          <p>書いた投稿は JSON として書き出せます。取り込みは全件を検査し、ID が既存のページと重なるファイルは一件も追加しません。</p>
+        </div>
+        <div class="transfer-actions">
+          <button id="export-local" class="quiet-action" type="button">この端末の投稿を書き出す</button>
+          <label class="file-picker">JSON ファイルを選ぶ
+            <input id="import-file" type="file" accept="application/json,.json" />
+          </label>
+          <button id="import-local" class="quiet-action" type="button">選んだファイルを取り込む</button>
+        </div>
+        <p id="transfer-status" class="transfer-status">正本の日記は取り込みでも変更しません。</p>
+      </div>
     </section>
 
     <section class="toolbar" aria-label="日記の表示設定">
@@ -50,7 +68,12 @@
         <p class="section-label">読む</p>
         <h2>みんなのページ</h2>
       </div>
-      <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
+      <div class="reading-controls">
+        <label class="search-label">日記を探す
+          <input id="entry-search" type="search" placeholder="言葉・書き手・気分" />
+        </label>
+        <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
+      </div>
     </section>
 
     <section id="entry-region" aria-busy="true" aria-labelledby="entries-heading">
@@ -77,6 +100,7 @@
             <h3></h3>
             <div class="entry-body"></div>
             <p class="reply-note" hidden></p>
+            <p class="reply-from" hidden></p>
             <div class="local-actions" hidden>
               <button class="delete-local" type="button">この端末から削除</button>
             </div>

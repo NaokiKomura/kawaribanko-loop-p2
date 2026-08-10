@@ -24,6 +24,7 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .composer { margin-top: 2.4rem; padding: 1.5rem; border: 1px solid #e7c9be; border-radius: .9rem; background: #fff8f4; }
 .composer h2 { margin: .28rem 0 .45rem; font-size: 1.4rem; }
 .composer-note { margin-bottom: 1.25rem; color: var(--muted); font-size: .9rem; line-height: 1.65; }
+.optional { color: var(--muted); font-weight: 400; }
 .entry-form { display: grid; gap: .85rem; }
 .form-row { display: grid; grid-template-columns: minmax(0, 1fr) 7rem; gap: .85rem; }
 .entry-form label { display: grid; gap: .35rem; color: #4c4640; font-size: .86rem; font-weight: 700; }
@@ -35,9 +36,19 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .primary-action, .quiet-action, .delete-local, .restore-local { padding: .52rem .75rem; border: 1px solid var(--line); border-radius: .5rem; cursor: pointer; }
 .primary-action { border-color: var(--accent); color: white; background: var(--accent); font-weight: 700; }
 .quiet-action, .restore-local { color: #4c4640; background: #fffdfa; }
+.transfer { margin-top: 1.5rem; padding-top: 1.3rem; border-top: 1px dashed #ddc8bc; }
+.transfer h3 { margin: .25rem 0 .35rem; font-size: 1rem; }
+.transfer > div > p:last-child, .transfer-status { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
+.transfer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; margin-top: .85rem; }
+.file-picker { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .6rem; border: 1px dashed #cdb9ad; border-radius: .5rem; color: #4c4640; background: #fffdfa; font-size: .82rem; cursor: pointer; }
+.file-picker input { max-width: 14rem; font-size: .76rem; }
+.transfer-status { margin-top: .75rem; }
 
 .toolbar { display: flex; align-items: end; justify-content: space-between; gap: 1.5rem; padding: 2.3rem 0 1.25rem; }
 .toolbar h2 { margin: .28rem 0 0; font-size: 1.45rem; }
+.reading-controls { display: grid; justify-items: end; gap: .65rem; }
+.search-label { display: grid; grid-template-columns: auto minmax(10rem, 16rem); align-items: center; gap: .45rem; color: var(--muted); font-size: .78rem; font-weight: 700; }
+.search-label input { width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .5rem; color: var(--ink); background: #fffdfa; font: inherit; }
 .filters { display: flex; flex-wrap: wrap; justify-content: end; gap: .4rem; }
 .filter { padding: .48rem .72rem; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: #fffdfa; cursor: pointer; font-size: .83rem; }
 .filter:hover { border-color: var(--filter-color, var(--accent)); color: var(--ink); }
@@ -60,7 +71,8 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .entry h3 { margin-bottom: .65rem; font-family: Georgia, "Hiragino Mincho ProN", serif; font-size: clamp(1.15rem, 3vw, 1.5rem); font-weight: 500; line-height: 1.45; }
 .entry-body { color: #4c4640; font-size: .96rem; line-height: 1.9; white-space: pre-wrap; }
 .reply-note { margin: 1rem 0 0; padding-top: .8rem; border-top: 1px dashed var(--line); color: var(--muted); font-size: .8rem; }
-.reply-note a { color: inherit; text-decoration-color: #c69587; text-underline-offset: .18em; }
+.reply-note a, .reply-from a { color: inherit; text-decoration-color: #c69587; text-underline-offset: .18em; }
+.reply-from { margin: .7rem 0 0; color: var(--muted); font-size: .8rem; }
 .local-actions { display: flex; gap: .5rem; margin-top: 1rem; }
 .delete-local { border-color: #d6aaa0; color: #863826; background: #fffafa; font-size: .8rem; }
 .local-bin { margin: 0 0 1.5rem; padding: .85rem 1rem; border: 1px dashed #d9aaa0; border-radius: .65rem; color: #6e5148; background: #fffaf7; }
@@ -72,6 +84,8 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 @media (max-width: 600px) {
   .page-shell { width: min(100% - 1.3rem, 54rem); padding-top: 2.7rem; }
   .toolbar { display: block; }
+  .reading-controls { justify-items: stretch; margin-top: 1rem; }
+  .search-label { grid-template-columns: 1fr; }
   .filters { justify-content: start; margin-top: 1rem; }
   .form-row { grid-template-columns: 1fr; }
   .form-actions { align-items: stretch; }
