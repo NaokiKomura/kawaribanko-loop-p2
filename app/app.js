@@ -4,7 +4,8 @@
   const DATA_URL = "data/diary.json";
   const STORAGE_KEY = "kawaribanko.local-entries.v1";
   const DRAFT_KEY = "kawaribanko.draft.v1";
-  const TRANSFER_VERSION = 1;
+  const TRANSFER_VERSION = 2;
+  const HANDOFF_KEY = "kawaribanko.handoff.v1";
   const limits = { mood: 8, title: 80, body: 1200 };
   const elements = {
     title: document.querySelector("#diary-title"),
@@ -29,13 +30,17 @@
     exportLocal: document.querySelector("#export-local"),
     importFile: document.querySelector("#import-file"),
     importLocal: document.querySelector("#import-local"),
-    transferStatus: document.querySelector("#transfer-status")
+    transferStatus: document.querySelector("#transfer-status"),
+    turnStatus: document.querySelector("#turn-status"),
+    turnDetail: document.querySelector("#turn-detail"),
+    cycleNav: document.querySelector("#cycle-nav")
   };
 
   let diary = null;
   let localEntries = [];
   let selectedAuthor = "all";
   let searchTerm = "";
+  let handoff = null;
 
   const formatDate = (date) => {
     const parsed = new Date(`${date}T00:00:00`);
@@ -98,12 +103,50 @@
         local: true,
         origin: entry.origin === "imported" ? "imported" : "local",
         deleted: Boolean(entry.deleted),
-        replyTo: typeof entry.replyTo === "string" ? entry.replyTo : null
+        replyTo: typeof entry.replyTo === "string" ? entry.replyTo : null,
+        handoffParentId: typeof entry.handoffParentId === "string" ? entry.handoffParentId : null
       }))
       : [];
   };
 
   const allEntries = () => [...diary.entries, ...localEntries.filter((entry) => !entry.deleted)];
+
+  const memberOrder = () => diary.members.filter((member) => member.id !== "owner").map((member) => member.id);
+
+  const nextAuthorAfter = (author, order = memberOrder()) => {
+    const index = order.indexOf(author);
+    return index < 0 ? order[0] : order[(index + 1) % order.length];
+  };
+
+  const orderedEntries = () => {
+    const orderValue = (entry) => Number.isInteger(entry.cycle) ? entry.cycle : Number.MAX_SAFE_INTEGER;
+    return allEntries().sort((a, b) => a.date.localeCompare(b.date) || orderValue(a) - orderValue(b) || a.id.localeCompare(b.id));
+  };
+
+  const defaultHandoff = () => {
+    const latest = orderedEntries().at(-1);
+    const order = memberOrder();
+    return latest ? { memberOrder: order, parentId: latest.id, nextAuthor: nextAuthorAfter(latest.author, order) } : null;
+  };
+
+  const isHandoff = (value, knownIds = new Set(allEntries().map((entry) => entry.id))) => {
+    const order = memberOrder();
+    return Boolean(value && typeof value === "object" && Array.isArray(value.memberOrder)
+      && value.memberOrder.length === order.length && value.memberOrder.every((id, index) => id === order[index])
+      && typeof value.parentId === "string" && knownIds.has(value.parentId)
+      && typeof value.nextAuthor === "string" && order.includes(value.nextAuthor));
+  };
+
+  const loadHandoff = () => {
+    const stored = safeRead(HANDOFF_KEY, null);
+    handoff = isHandoff(stored) ? stored : defaultHandoff();
+  };
+
+  const saveHandoff = (next) => {
+    if (!next || !safeWrite(HANDOFF_KEY, next)) return false;
+    handoff = next;
+    return true;
+  };
 
   const memberFor = (id) => diary.members.find((member) => member.id === id) || {
     id,
@@ -169,6 +212,36 @@
     elements.filters.replaceChildren(fragment);
   };
 
+  const renderCycleNav = () => {
+    const firstByCycle = new Map();
+    orderedEntries().forEach((entry) => {
+      if (Number.isInteger(entry.cycle) && !firstByCycle.has(entry.cycle)) firstByCycle.set(entry.cycle, entry);
+    });
+    const fragment = document.createDocumentFragment();
+    firstByCycle.forEach((entry, cycle) => {
+      const link = document.createElement("a");
+      link.href = `#entry-${entry.id}`;
+      link.dataset.entryTarget = entry.id;
+      link.textContent = `cycle ${cycle}`;
+      fragment.append(link);
+    });
+    elements.cycleNav.replaceChildren(fragment);
+  };
+
+  const renderTurn = () => {
+    if (!handoff) {
+      elements.turnStatus.textContent = "最初のページを待っています。";
+      elements.turnDetail.textContent = "順番は、ページが一つできてから案内します。";
+      return;
+    }
+    const next = memberFor(handoff.nextAuthor);
+    const parent = allEntries().find((entry) => entry.id === handoff.parentId);
+    elements.turnStatus.textContent = `いまは ${next.emoji} ${next.name}さんの番です。`;
+    elements.turnDetail.textContent = parent
+      ? `「${memberFor(parent.author).name}」の「${parent.title}」を受け取り、次の人を案内しています。順番外の投稿も消しません。`
+      : "次の人を案内しています。順番外の投稿も消しません。";
+  };
+
   const replyText = (entry, entriesById) => {
     if (!entry.replyTo) return null;
     const target = entriesById.get(entry.replyTo);
@@ -177,8 +250,7 @@
   };
 
   const renderEntries = () => {
-    const orderValue = (entry) => Number.isInteger(entry.cycle) ? entry.cycle : Number.MAX_SAFE_INTEGER;
-    const ordered = allEntries().sort((a, b) => a.date.localeCompare(b.date) || orderValue(a) - orderValue(b) || a.id.localeCompare(b.id));
+    const ordered = orderedEntries();
     const byAuthor = selectedAuthor === "all" ? ordered : ordered.filter((entry) => entry.author === selectedAuthor);
     const query = searchTerm.toLocaleLowerCase("ja-JP");
     const visible = query ? byAuthor.filter((entry) => [entry.title, entry.body, entry.mood, memberFor(entry.author).name].join(" ").toLocaleLowerCase("ja-JP").includes(query)) : byAuthor;
@@ -261,12 +333,15 @@
     if (visible.length === 0) {
       const empty = document.createElement("li");
       empty.className = "empty";
-      empty.textContent = "この書き手の日記は、まだありません。";
+      empty.textContent = query
+        ? `「${searchTerm}」に一致する日記はありません。検索語を変えてみてください。`
+        : selectedAuthor === "all" ? "日記は、まだありません。" : "この書き手の日記は、まだありません。";
       elements.entries.append(empty);
     }
     setStatus(`${visible.length}件の日記を表示しています${query ? `（「${searchTerm}」を検索中）` : ""}`);
     renderLocalBin();
     renderReplyOptions();
+    renderCycleNav();
   };
 
   const renderLocalBin = () => {
@@ -297,6 +372,7 @@
     renderAuthors();
     renderFilters();
     renderEntries();
+    renderTurn();
     elements.entryRegion.setAttribute("aria-busy", "false");
   };
 
@@ -353,10 +429,15 @@
       setStatus(messages.join(" "), "error");
       return;
     }
-    const entry = { id: makeId(), cycle: null, date: today(), local: true, origin: "local", deleted: false, ...values };
+    const entry = {
+      id: makeId(), cycle: null, date: today(), local: true, origin: "local", deleted: false,
+      handoffParentId: handoff?.parentId || null, ...values
+    };
     const next = [...localEntries, entry];
     if (!safeWrite(STORAGE_KEY, next)) return;
     localEntries = next;
+    const nextHandoff = { memberOrder: memberOrder(), parentId: entry.id, nextAuthor: nextAuthorAfter(entry.author) };
+    const handoffSaved = saveHandoff(nextHandoff);
     elements.form.reset();
     updateDraftStatus(safeRemove(DRAFT_KEY)
       ? "投稿しました。下書きは消去しました。"
@@ -364,6 +445,8 @@
     selectedAuthor = "all";
     renderFilters();
     renderEntries();
+    renderTurn();
+    if (!handoffSaved) setTransferStatus("投稿は保存しましたが、次の番の保存には失敗しました。次の受け渡し前に確認してください。", "error");
     const newEntry = document.querySelector(`#entry-${entry.id}`);
     if (newEntry) newEntry.focus({ preventScroll: true });
   });
@@ -386,18 +469,24 @@
     renderEntries();
   });
 
+  const revealEntry = (event, targetId) => {
+    const target = allEntries().find((entry) => entry.id === targetId);
+    if (!target) return;
+    if (selectedAuthor === "all" && !searchTerm) return;
+    event.preventDefault();
+    selectedAuthor = "all";
+    searchTerm = "";
+    elements.search.value = "";
+    renderFilters();
+    renderEntries();
+    requestAnimationFrame(() => document.querySelector(`#entry-${targetId}`)?.focus());
+  };
+
   elements.entries.addEventListener("click", (event) => {
     const entryLink = event.target.closest("a[data-entry-target]");
     if (entryLink) {
       const targetId = entryLink.dataset.entryTarget;
-      const target = allEntries().find((entry) => entry.id === targetId);
-      if (target && selectedAuthor !== "all" && target.author !== selectedAuthor) {
-        event.preventDefault();
-        selectedAuthor = "all";
-        renderFilters();
-        renderEntries();
-        requestAnimationFrame(() => document.querySelector(`#entry-${targetId}`)?.focus());
-      }
+      revealEntry(event, targetId);
       return;
     }
     const remove = event.target.closest("button.delete-local");
@@ -409,6 +498,11 @@
       }
       return;
     }
+  });
+
+  elements.cycleNav.addEventListener("click", (event) => {
+    const link = event.target.closest("a[data-entry-target]");
+    if (link) revealEntry(event, link.dataset.entryTarget);
   });
 
   elements.localBinList.addEventListener("click", (event) => {
@@ -435,39 +529,84 @@
     title: entry.title,
     body: entry.body,
     replyTo: entry.replyTo || null,
+    handoffParentId: entry.handoffParentId || null,
     deleted: Boolean(entry.deleted)
   });
 
+  const entryIdentity = (entry) => ({
+    author: entry.author,
+    date: entry.date,
+    mood: entry.mood,
+    title: entry.title,
+    body: entry.body,
+    replyTo: entry.replyTo || null,
+    handoffParentId: entry.handoffParentId || null
+  });
+
+  const identityDifferences = (left, right) => Object.keys(entryIdentity(left)).filter((key) => entryIdentity(left)[key] !== entryIdentity(right)[key]);
+
+  const identityLabel = (field) => ({
+    author: "書き手", date: "日付", mood: "気分", title: "見出し", body: "本文", replyTo: "返信先", handoffParentId: "引き継ぎ元"
+  }[field]);
+
   const validateImportedEntries = (data) => {
-    if (!data || data.version !== TRANSFER_VERSION || !Array.isArray(data.entries)) {
+    if (!data || ![1, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
       throw new Error("対応していないファイル形式です。");
     }
-    const knownIds = new Set([...diary.entries, ...localEntries].map((entry) => entry.id));
-    const importIds = new Set();
+    const knownEntries = new Map([...diary.entries, ...localEntries].map((entry) => [entry.id, entry]));
+    const importEntries = new Map();
     const members = new Set(diary.members.filter((member) => member.id !== "owner").map((member) => member.id));
-    const entries = data.entries.map((entry, index) => {
+    const additions = [];
+    const reencountered = [];
+    data.entries.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") throw new Error(`${index + 1}件目の形式が正しくありません。`);
       if (typeof entry.id !== "string" || !entry.id.startsWith("local-") || entry.id.length > 120) throw new Error(`${index + 1}件目のIDが正しくありません。`);
-      if (knownIds.has(entry.id) || importIds.has(entry.id)) throw new Error(`ID「${entry.id}」が既存のページと重なっています。何も取り込みませんでした。`);
       if (!members.has(entry.author)) throw new Error(`${index + 1}件目の書き手がこの日記帳にいません。`);
       if (typeof entry.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) throw new Error(`${index + 1}件目の日付が正しくありません。`);
       if (typeof entry.mood !== "string" || !entry.mood || entry.mood.length > limits.mood) throw new Error(`${index + 1}件目の気分が正しくありません。`);
       if (typeof entry.title !== "string" || !entry.title || entry.title.length > limits.title) throw new Error(`${index + 1}件目の見出しが正しくありません。`);
       if (typeof entry.body !== "string" || !entry.body || entry.body.length > limits.body) throw new Error(`${index + 1}件目の本文が正しくありません。`);
       if (entry.replyTo !== null && entry.replyTo !== undefined && typeof entry.replyTo !== "string") throw new Error(`${index + 1}件目の返信先が正しくありません。`);
-      importIds.add(entry.id);
-      return { ...entry, cycle: null, local: true, origin: "imported", deleted: Boolean(entry.deleted), replyTo: entry.replyTo || null };
+      if (data.version === TRANSFER_VERSION && entry.handoffParentId !== null && entry.handoffParentId !== undefined && typeof entry.handoffParentId !== "string") throw new Error(`${index + 1}件目の引き継ぎ元が正しくありません。`);
+      const candidate = {
+        ...entry, cycle: null, local: true, origin: "imported", deleted: Boolean(entry.deleted), replyTo: entry.replyTo || null,
+        handoffParentId: typeof entry.handoffParentId === "string" ? entry.handoffParentId : null
+      };
+      const previous = knownEntries.get(candidate.id) || importEntries.get(candidate.id);
+      if (previous) {
+        const differences = identityDifferences(previous, candidate);
+        if (differences.length) throw new Error(`ID「${candidate.id}」は ${differences.map(identityLabel).join("・")} が既存のページと食い違います。何も取り込みませんでした。`);
+        reencountered.push(candidate.id);
+        return;
+      }
+      importEntries.set(candidate.id, candidate);
+      additions.push(candidate);
     });
-    entries.forEach((entry, index) => {
-      if (entry.replyTo && !knownIds.has(entry.replyTo) && !importIds.has(entry.replyTo)) {
+    const knownIds = new Set([...knownEntries.keys(), ...importEntries.keys()]);
+    additions.forEach((entry, index) => {
+      if (entry.replyTo && !knownIds.has(entry.replyTo)) {
         throw new Error(`${index + 1}件目の返信先が見つかりません。`);
       }
+      if (entry.handoffParentId && !knownIds.has(entry.handoffParentId)) {
+        throw new Error(`${index + 1}件目の引き継ぎ元が見つかりません。`);
+      }
     });
-    return entries;
+    const importedHandoff = data.version === TRANSFER_VERSION ? data.handoff : null;
+    if (data.version === TRANSFER_VERSION && !isHandoff(importedHandoff, knownIds)) {
+      throw new Error("引き継ぎ情報が正しくありません。何も取り込みませんでした。");
+    }
+    if (importedHandoff) {
+      const parent = importEntries.get(importedHandoff.parentId) || knownEntries.get(importedHandoff.parentId);
+      if (importedHandoff.nextAuthor !== nextAuthorAfter(parent.author, importedHandoff.memberOrder)) {
+        throw new Error("引き継ぎ情報の次の書き手が親ページと一致しません。何も取り込みませんでした。");
+      }
+    }
+    return { additions, reencountered, handoff: importedHandoff, legacy: data.version === 1 };
   };
 
   elements.exportLocal.addEventListener("click", () => {
-    const payload = { version: TRANSFER_VERSION, exportedAt: new Date().toISOString(), entries: localEntries.map(exportableEntry) };
+    const outgoingHandoff = handoff || defaultHandoff();
+    const payload = { version: TRANSFER_VERSION, exportedAt: new Date().toISOString(), entries: localEntries.map(exportableEntry), handoff: outgoingHandoff };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -475,7 +614,7 @@
     link.download = `kawaribanko-${today()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    setTransferStatus(`${localEntries.length}件の端末内投稿を書き出しました。`);
+    setTransferStatus(`${localEntries.length}件の端末内投稿と、次の番を書き出しました。`);
   });
 
   elements.importLocal.addEventListener("click", async () => {
@@ -486,13 +625,22 @@
     }
     try {
       const data = JSON.parse(await file.text());
-      const entries = validateImportedEntries(data);
-      const next = [...localEntries, ...entries];
+      const incoming = validateImportedEntries(data);
+      const next = [...localEntries, ...incoming.additions];
       if (!safeWrite(STORAGE_KEY, next)) return;
       localEntries = next;
+      const handoffSaved = !incoming.handoff || saveHandoff(incoming.handoff);
       elements.importFile.value = "";
       renderEntries();
-      setTransferStatus(`${entries.length}件を取り込みました。正本の日記は変更していません。`);
+      renderTurn();
+      if (!handoffSaved) {
+        setTransferStatus(`${incoming.additions.length}件は取り込みましたが、次の番の保存には失敗しました。`, "error");
+      } else if (incoming.legacy) {
+        setTransferStatus(`${incoming.additions.length}件を旧形式から取り込みました。次の番はこの端末で推定しています。`);
+      } else {
+        const skipped = incoming.reencountered.length ? `、再会した${incoming.reencountered.length}件はそのままにしました` : "";
+        setTransferStatus(`${incoming.additions.length}件を取り込みました${skipped}。正本の日記は変更していません。`);
+      }
     } catch (error) {
       setTransferStatus(`取り込みませんでした: ${error.message}`, "error");
     }
@@ -509,6 +657,7 @@
       }
       diary = data;
       loadLocalEntries();
+      loadHandoff();
       render();
       restoreDraft();
     })

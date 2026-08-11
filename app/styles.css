@@ -43,13 +43,19 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .file-picker { display: inline-flex; align-items: center; gap: .4rem; padding: .45rem .6rem; border: 1px dashed #cdb9ad; border-radius: .5rem; color: #4c4640; background: #fffdfa; font-size: .82rem; cursor: pointer; }
 .file-picker input { max-width: 14rem; font-size: .76rem; }
 .transfer-status { margin-top: .75rem; }
+.turn-card { margin-top: 1rem; padding: .9rem 1rem; border-left: 3px solid var(--accent); border-radius: 0 .55rem .55rem 0; background: #fff1ea; }
+.turn-status { margin: .25rem 0 .3rem; color: var(--ink); font-weight: 800; }
+.turn-detail { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
 
-.toolbar { display: flex; align-items: end; justify-content: space-between; gap: 1.5rem; padding: 2.3rem 0 1.25rem; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1.5rem; padding: 2.3rem 0 1.25rem; }
 .toolbar h2 { margin: .28rem 0 0; font-size: 1.45rem; }
 .reading-controls { display: grid; justify-items: end; gap: .65rem; }
 .search-label { display: grid; grid-template-columns: auto minmax(10rem, 16rem); align-items: center; gap: .45rem; color: var(--muted); font-size: .78rem; font-weight: 700; }
 .search-label input { width: 100%; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: .5rem; color: var(--ink); background: #fffdfa; font: inherit; }
 .filters { display: flex; flex-wrap: wrap; justify-content: end; gap: .4rem; }
+.cycle-nav { display: flex; flex: 1 0 100%; flex-wrap: wrap; justify-content: end; gap: .35rem; }
+.cycle-nav a { padding: .32rem .55rem; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: #fffdfa; font-size: .76rem; text-decoration: none; }
+.cycle-nav a:hover { border-color: var(--accent); color: var(--ink); }
 .filter { padding: .48rem .72rem; border: 1px solid var(--line); border-radius: 99px; color: var(--muted); background: #fffdfa; cursor: pointer; font-size: .83rem; }
 .filter:hover { border-color: var(--filter-color, var(--accent)); color: var(--ink); }
 .filter[aria-pressed="true"] { border-color: var(--filter-color, var(--accent)); background: var(--filter-bg, var(--accent-soft)); color: var(--ink); font-weight: 700; }
@@ -87,6 +93,7 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
   .reading-controls { justify-items: stretch; margin-top: 1rem; }
   .search-label { grid-template-columns: 1fr; }
   .filters { justify-content: start; margin-top: 1rem; }
+  .cycle-nav { justify-content: start; }
   .form-row { grid-template-columns: 1fr; }
   .form-actions { align-items: stretch; }
   .primary-action, .quiet-action { flex: 1 1 auto; }

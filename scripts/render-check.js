@@ -14,148 +14,165 @@ const templateHtml = templateMatch[1];
 const idSelectors = [...appSource.matchAll(/document\.querySelector\(\s*["'](#[\w-]+)["']\s*\)/g)].map((match) => match[1]);
 const templateSelectors = [...appSource.matchAll(/node\.querySelector\(\s*["']([^"']+)["']\s*\)/g)].map((match) => match[1]);
 const missingIds = [...new Set(idSelectors)].filter((selector) => !new RegExp(`\\bid=["']${selector.slice(1)}["']`, "i").test(index));
-const existsInTemplate = (selector) => {
-  if (selector.startsWith(".")) return new RegExp(`\\bclass=["'][^"']*\\b${selector.slice(1)}\\b`, "i").test(templateHtml);
-  return new RegExp(`<${selector}\\b`, "i").test(templateHtml);
-};
+const existsInTemplate = (selector) => selector.startsWith(".")
+  ? new RegExp(`\\bclass=["'][^"']*\\b${selector.slice(1)}\\b`, "i").test(templateHtml)
+  : new RegExp(`<${selector}\\b`, "i").test(templateHtml);
 const missingTemplateSelectors = [...new Set(templateSelectors)].filter((selector) => !existsInTemplate(selector));
 if (missingIds.length || missingTemplateSelectors.length) {
   throw new Error(`index.html と app.js の DOM 契約が壊れています: ${[...missingIds, ...missingTemplateSelectors].join(", ")}`);
 }
 
-class FakeNode {
-  constructor(tag = "div") {
-    this.tag = tag;
-    this.children = [];
-    this.dataset = {};
-    this.style = { setProperty() {} };
-    this.classList = { add() {} };
-    this.listeners = {};
-    this.hidden = false;
-    this.value = "";
-  }
-
-  append(...items) {
-    items.forEach((item) => {
-      if (item instanceof FakeFragment) this.children.push(...item.children);
-      else this.children.push(item);
-    });
-  }
-
-  replaceChildren(...items) {
-    this.children = [];
-    this.append(...items);
-  }
-
-  querySelector(selector) {
-    return this.selectorMap?.[selector] || null;
-  }
-
-  setAttribute(name, value) {
-    this.attributes = this.attributes || {};
-    this.attributes[name] = value;
-  }
-
-  addEventListener(name, listener) {
-    this.listeners[name] = listener;
-  }
-
-  reset() {
-    this.resetCalled = true;
-    [nodes["#entry-author"], nodes["#entry-mood"], nodes["#entry-title"], nodes["#entry-body"], nodes["#entry-reply-to"]].forEach((node) => { node.value = ""; });
-  }
-
-  click() {}
-  focus() {}
-}
-
-class FakeFragment extends FakeNode {}
-
-const entryFragment = () => {
-  const fragment = new FakeFragment();
-  const item = new FakeNode("li");
-  fragment.children = [item];
-  fragment.selectorMap = Object.fromEntries(templateSelectors.map((selector) => [selector, selector === ".entry" ? item : new FakeNode(selector)]));
-  return fragment;
-};
-
-const ids = [...new Set(idSelectors)];
-const nodes = Object.fromEntries(ids.map((id) => [id, new FakeNode()]));
-nodes["#entry-template"] = { content: { cloneNode: entryFragment } };
-const storage = new Map();
-storage.set("kawaribanko.draft.v1", JSON.stringify({ author: "dev", mood: "🫖", title: "下書き", body: "復元される本文", replyTo: "c2-feedback" }));
-storage.set("kawaribanko.local-entries.v1", JSON.stringify([{
-  id: "local-existing", author: "dev", date: "2026-08-09", mood: "☕", title: "ローカルの一頁", body: "正本と混ざる。", local: true, deleted: false
-}]));
-
-const document = {
-  title: "",
-  querySelector(selector) { return nodes[selector] || null; },
-  createElement(tag) { return new FakeNode(tag); },
-  createDocumentFragment() { return new FakeFragment(); }
-};
 const diary = JSON.parse(fs.readFileSync(path.join(appDir, "data/diary.json"), "utf8"));
-const context = {
-  console,
-  document,
-  localStorage: {
-    getItem: (key) => storage.has(key) ? storage.get(key) : null,
-    setItem: (key, value) => storage.set(key, value),
-    removeItem: (key) => storage.delete(key)
-  },
-  fetch: async () => ({ ok: true, json: async () => diary }),
-  requestAnimationFrame: (callback) => callback(),
-  Intl,
-  Date,
-  Map,
-  Math,
-  Object,
-  Array,
-  JSON,
-  Error,
-  Blob: class {},
-  URL: { createObjectURL: () => "blob:test", revokeObjectURL() {} }
+const waitForRender = () => new Promise((resolve) => setImmediate(resolve));
+
+const boot = async (storage = new Map()) => {
+  let latestBlob = null;
+  let nodes;
+  class FakeNode {
+    constructor(tag = "div") {
+      this.tag = tag;
+      this.children = [];
+      this.dataset = {};
+      this.style = { setProperty() {} };
+      this.classList = { add() {} };
+      this.listeners = {};
+      this.hidden = false;
+      this.value = "";
+    }
+    append(...items) {
+      items.forEach((item) => {
+        if (item instanceof FakeFragment) this.children.push(...item.children);
+        else this.children.push(item);
+      });
+    }
+    replaceChildren(...items) { this.children = []; this.append(...items); }
+    querySelector(selector) { return this.selectorMap?.[selector] || null; }
+    setAttribute(name, value) { this.attributes = this.attributes || {}; this.attributes[name] = value; }
+    addEventListener(name, listener) { this.listeners[name] = listener; }
+    reset() {
+      ["#entry-author", "#entry-mood", "#entry-title", "#entry-body", "#entry-reply-to"].forEach((id) => { nodes[id].value = ""; });
+    }
+    click() {}
+    focus() {}
+  }
+  class FakeFragment extends FakeNode {}
+  const entryFragment = () => {
+    const fragment = new FakeFragment();
+    const item = new FakeNode("li");
+    fragment.children = [item];
+    fragment.selectorMap = Object.fromEntries(templateSelectors.map((selector) => [selector, selector === ".entry" ? item : new FakeNode(selector)]));
+    return fragment;
+  };
+  const ids = [...new Set(idSelectors)];
+  nodes = Object.fromEntries(ids.map((id) => [id, new FakeNode()]));
+  nodes["#entry-template"] = { content: { cloneNode: entryFragment } };
+  const document = {
+    title: "",
+    querySelector(selector) { return nodes[selector] || null; },
+    createElement(tag) { return new FakeNode(tag); },
+    createDocumentFragment() { return new FakeFragment(); }
+  };
+  class CaptureBlob {
+    constructor(parts) { this.text = parts.join(""); latestBlob = this; }
+  }
+  const context = {
+    console,
+    document,
+    localStorage: {
+      getItem: (key) => storage.has(key) ? storage.get(key) : null,
+      setItem: (key, value) => storage.set(key, value),
+      removeItem: (key) => storage.delete(key)
+    },
+    fetch: async () => ({ ok: true, json: async () => diary }),
+    requestAnimationFrame: (callback) => callback(),
+    Intl, Date, Map, Math, Object, Array, JSON, Error,
+    Blob: CaptureBlob,
+    URL: { createObjectURL: () => "blob:test", revokeObjectURL() {} }
+  };
+  vm.runInNewContext(appSource, context, { filename: "app.js" });
+  await waitForRender();
+  return {
+    nodes,
+    storage,
+    exported() {
+      nodes["#export-local"].listeners.click();
+      if (!latestBlob) throw new Error("書き出しが Blob を作らなかった");
+      return JSON.parse(latestBlob.text);
+    },
+    async importPayload(payload) {
+      nodes["#import-file"].files = [{ text: async () => JSON.stringify(payload) }];
+      await nodes["#import-local"].listeners.click();
+    }
+  };
 };
 
-vm.runInNewContext(appSource, context, { filename: "app.js" });
+const localEntries = (app) => JSON.parse(app.storage.get("kawaribanko.local-entries.v1") || "[]");
 
-setImmediate(async () => {
-  const entries = nodes["#entries"];
-  const form = nodes["#entry-form"];
-  if (entries.children.length !== diary.entries.length + 1) throw new Error("正本とローカル投稿が同じタイムラインに描画されなかった");
-  if (nodes["#diary-title"].textContent !== diary.title) throw new Error("JSON の title が描画されなかった");
-  if (nodes["#entry-title"].value !== "下書き" || nodes["#entry-reply-to"].value !== "c2-feedback") throw new Error("下書きまたは返信先が復元されなかった");
+const main = async () => {
+  const aStorage = new Map();
+  aStorage.set("kawaribanko.draft.v1", JSON.stringify({ author: "dev", mood: "🫖", title: "下書き", body: "復元される本文", replyTo: "c2-feedback" }));
+  aStorage.set("kawaribanko.local-entries.v1", JSON.stringify([{
+    id: "local-a", author: "dev", date: "2026-08-11", mood: "☕", title: "__render_check_token_7f3__", body: "正本と混ざる。", replyTo: "c2-feedback", local: true, deleted: false
+  }]));
+  const a = await boot(aStorage);
+  const entries = a.nodes["#entries"];
+  const baseCount = diary.entries.length;
+  if (entries.children.length !== baseCount + 1) throw new Error("正本とローカル投稿が同じタイムラインに描画されなかった");
+  if (a.nodes["#diary-title"].textContent !== diary.title) throw new Error("JSON の title が描画されなかった");
+  if (a.nodes["#entry-title"].value !== "下書き" || a.nodes["#entry-reply-to"].value !== "c2-feedback") throw new Error("下書きまたは返信先が復元されなかった");
+  if (!a.nodes["#turn-status"].textContent.includes("さんの番")) throw new Error("次の番が表示されなかった");
+  if (!a.nodes["#cycle-nav"].children.length) throw new Error("サイクル別の目次が描画されなかった");
 
-  nodes["#entry-author"].value = "dev";
-  nodes["#entry-mood"].value = "🙂";
-  nodes["#entry-title"].value = "投稿の検証";
-  nodes["#entry-body"].value = "localStorage に保存する。";
-  nodes["#entry-reply-to"].value = "c2-feedback";
-  form.listeners.submit({ preventDefault() {} });
-  let saved = JSON.parse(storage.get("kawaribanko.local-entries.v1"));
-  if (saved.length !== 2 || saved[1].title !== "投稿の検証" || saved[1].replyTo !== "c2-feedback") throw new Error("返信付き投稿が localStorage に保存されなかった");
-  if (entries.children.length !== diary.entries.length + 2) throw new Error("投稿後の再描画に失敗した");
-
+  a.nodes["#entry-search"].value = "__render_check_token_7f3__";
+  a.nodes["#entry-search"].listeners.input();
+  if (entries.children.length !== 1) throw new Error("正本と切り離した検索結果を絞り込めなかった");
+  let prevented = false;
   entries.listeners.click({
-    target: { closest: (selector) => selector === "button.delete-local" ? { dataset: { entryId: "local-existing" } } : null }
+    preventDefault() { prevented = true; },
+    target: { closest: (selector) => selector === "a[data-entry-target]" ? { dataset: { entryTarget: "c2-feedback" } } : null }
   });
-  if (!JSON.parse(storage.get("kawaribanko.local-entries.v1"))[0].deleted || nodes["#local-bin"].hidden) throw new Error("ローカル投稿の削除が反映されなかった");
-  nodes["#local-bin-list"].listeners.click({
-    target: { closest: (selector) => selector === "button.restore-local" ? { dataset: { entryId: "local-existing" } } : null }
-  });
-  if (JSON.parse(storage.get("kawaribanko.local-entries.v1"))[0].deleted) throw new Error("削除した投稿を復元できなかった");
+  if (!prevented || a.nodes["#entry-search"].value || entries.children.length !== baseCount + 1) throw new Error("検索中の返信リンクが表示条件を解除して追えなかった");
+  a.nodes["#entry-search"].value = "__missing_render_check_token__";
+  a.nodes["#entry-search"].listeners.input();
+  if (!entries.children[0].textContent.includes("一致する日記はありません")) throw new Error("検索結果ゼロの説明が原因に合っていない");
+  a.nodes["#entry-search"].value = "";
+  a.nodes["#entry-search"].listeners.input();
 
-  nodes["#import-file"].files = [{ text: async () => JSON.stringify({ version: 1, entries: [{
-    id: "local-imported", author: "slides", date: "2026-08-10", mood: "📦", title: "持ち運びの検証", body: "別の端末から届く。", replyTo: "c2-feedback"
-  }] }) }];
-  await nodes["#import-local"].listeners.click();
-  saved = JSON.parse(storage.get("kawaribanko.local-entries.v1"));
-  if (saved.length !== 3 || saved[2].origin !== "imported") throw new Error("検証済みの投稿を取り込めなかった");
-  await nodes["#import-local"].listeners.click();
-  if (JSON.parse(storage.get("kawaribanko.local-entries.v1")).length !== 3) throw new Error("ID 衝突した取り込みが既存投稿を変えた");
-  nodes["#entry-search"].value = "持ち運び";
-  nodes["#entry-search"].listeners.input();
-  if (entries.children.length !== 1) throw new Error("検索結果を絞り込めなかった");
+  const transferA = a.exported();
+  if (transferA.version !== 2 || !transferA.handoff || transferA.handoff.parentId !== "local-a") throw new Error("version 2 の引き継ぎが書き出されなかった");
+  const legacy = await boot(new Map());
+  await legacy.importPayload({ version: 1, entries: [transferA.entries[0]] });
+  if (localEntries(legacy).length !== 1 || !legacy.nodes["#transfer-status"].textContent.includes("旧形式")) throw new Error("version 1 のバックアップを互換取り込みできなかった");
+  const b = await boot(new Map());
+  await b.importPayload(transferA);
+  if (localEntries(b).length !== 1 || !b.nodes["#turn-status"].textContent.includes("レビュー担当")) throw new Error("引き継ぎを受けた端末で次の番を案内できなかった");
 
-  process.stdout.write("render-check: DOM contract, fetch, replies, draft, local post, delete/restore, import, and search passed\n");
+  b.nodes["#entry-author"].value = "feedback";
+  b.nodes["#entry-mood"].value = "🔁";
+  b.nodes["#entry-title"].value = "B からの新しい頁";
+  b.nodes["#entry-body"].value = "A にだけ届いていない頁。";
+  b.nodes["#entry-reply-to"].value = "local-a";
+  b.nodes["#entry-form"].listeners.submit({ preventDefault() {} });
+  const bEntries = localEntries(b);
+  const bNew = bEntries.find((entry) => entry.id !== "local-a");
+  if (!bNew || bNew.handoffParentId !== "local-a") throw new Error("新しい頁が受け取った引き継ぎ元を保存しなかった");
+  const transferB = b.exported();
+  const beforeRoundtrip = localEntries(a);
+  await a.importPayload(transferB);
+  const afterRoundtrip = localEntries(a);
+  if (afterRoundtrip.length !== beforeRoundtrip.length + 1 || !afterRoundtrip.some((entry) => entry.id === bNew.id)) throw new Error("A→B→A の往復で B の新しい頁だけを受け取れなかった");
+  if (afterRoundtrip.find((entry) => entry.id === "local-a").body !== beforeRoundtrip.find((entry) => entry.id === "local-a").body) throw new Error("再会したページが往復で変わった");
+
+  const conflicting = JSON.parse(JSON.stringify(transferB));
+  conflicting.entries.find((entry) => entry.id === bNew.id).body = "同じ ID なのに本文だけ違う。";
+  const beforeConflict = JSON.stringify(localEntries(a));
+  await a.importPayload(conflicting);
+  if (JSON.stringify(localEntries(a)) !== beforeConflict || !a.nodes["#transfer-status"].textContent.includes("本文")) throw new Error("内容が違う同一 ID を原子的に拒否できなかった");
+
+  process.stdout.write("render-check: DOM contract, search/reply, cycle index, versioned handoff, roundtrip, and conflicts passed\n");
+};
+
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });

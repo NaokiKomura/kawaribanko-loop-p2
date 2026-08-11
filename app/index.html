@@ -50,7 +50,7 @@
         <div>
           <p class="section-label">渡す</p>
           <h3 id="transfer-title">この端末のページを持ち運ぶ</h3>
-          <p>書いた投稿は JSON として書き出せます。取り込みは全件を検査し、ID が既存のページと重なるファイルは一件も追加しません。</p>
+          <p>書いた投稿と次の番を JSON として渡せます。同じ内容のページは再会として飛ばし、同じ ID で内容が違うときだけ取り込みを止めます。</p>
         </div>
         <div class="transfer-actions">
           <button id="export-local" class="quiet-action" type="button">この端末の投稿を書き出す</button>
@@ -61,6 +61,11 @@
         </div>
         <p id="transfer-status" class="transfer-status">正本の日記は取り込みでも変更しません。</p>
       </div>
+      <aside class="turn-card" aria-label="現在の引き継ぎ">
+        <p class="section-label">次の番</p>
+        <p id="turn-status" class="turn-status">引き継ぎを準備しています…</p>
+        <p id="turn-detail" class="turn-detail"></p>
+      </aside>
     </section>
 
     <section class="toolbar" aria-label="日記の表示設定">
@@ -74,6 +79,7 @@
         </label>
         <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
       </div>
+      <nav id="cycle-nav" class="cycle-nav" aria-label="サイクル別の目次"></nav>
     </section>
 
     <section id="entry-region" aria-busy="true" aria-labelledby="entries-heading">
