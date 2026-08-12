@@ -4,8 +4,9 @@
   const DATA_URL = "data/diary.json";
   const STORAGE_KEY = "kawaribanko.local-entries.v1";
   const DRAFT_KEY = "kawaribanko.draft.v1";
-  const TRANSFER_VERSION = 2;
+  const TRANSFER_VERSION = 3;
   const HANDOFF_KEY = "kawaribanko.handoff.v1";
+  const BRANCH_SELECTION_KEY = "kawaribanko.branch-selections.v1";
   const limits = { mood: 8, title: 80, body: 1200 };
   const elements = {
     title: document.querySelector("#diary-title"),
@@ -33,6 +34,9 @@
     transferStatus: document.querySelector("#transfer-status"),
     turnStatus: document.querySelector("#turn-status"),
     turnDetail: document.querySelector("#turn-detail"),
+    turnNotice: document.querySelector("#turn-notice"),
+    branchPanel: document.querySelector("#branch-panel"),
+    branchList: document.querySelector("#branch-list"),
     cycleNav: document.querySelector("#cycle-nav")
   };
 
@@ -41,6 +45,8 @@
   let selectedAuthor = "all";
   let searchTerm = "";
   let handoff = null;
+  let branchSelections = {};
+  let handoffNotice = "";
 
   const formatDate = (date) => {
     const parsed = new Date(`${date}T00:00:00`);
@@ -110,6 +116,7 @@
   };
 
   const allEntries = () => [...diary.entries, ...localEntries.filter((entry) => !entry.deleted)];
+  const allKnownEntries = () => [...diary.entries, ...localEntries];
 
   const memberOrder = () => diary.members.filter((member) => member.id !== "owner").map((member) => member.id);
 
@@ -129,7 +136,7 @@
     return latest ? { memberOrder: order, parentId: latest.id, nextAuthor: nextAuthorAfter(latest.author, order) } : null;
   };
 
-  const isHandoff = (value, knownIds = new Set(allEntries().map((entry) => entry.id))) => {
+  const isHandoff = (value, knownIds = new Set(allKnownEntries().map((entry) => entry.id))) => {
     const order = memberOrder();
     return Boolean(value && typeof value === "object" && Array.isArray(value.memberOrder)
       && value.memberOrder.length === order.length && value.memberOrder.every((id, index) => id === order[index])
@@ -139,6 +146,11 @@
 
   const loadHandoff = () => {
     const stored = safeRead(HANDOFF_KEY, null);
+    if (stored && !isHandoff(stored)) {
+      handoff = defaultHandoff();
+      handoffNotice = "保存されていた引き継ぎ先が見つからないため、表示中の最新ページから次の番を案内し直しました。";
+      return;
+    }
     handoff = isHandoff(stored) ? stored : defaultHandoff();
   };
 
@@ -146,6 +158,58 @@
     if (!next || !safeWrite(HANDOFF_KEY, next)) return false;
     handoff = next;
     return true;
+  };
+
+  const branchGraph = (entries = allEntries()) => {
+    const byId = new Map(entries.map((entry) => [entry.id, entry]));
+    const children = new Map();
+    entries.forEach((entry) => {
+      if (!entry.handoffParentId || !byId.has(entry.handoffParentId)) return;
+      const siblings = children.get(entry.handoffParentId) || [];
+      siblings.push(entry);
+      children.set(entry.handoffParentId, siblings);
+    });
+    children.forEach((siblings) => siblings.sort((left, right) => left.date.localeCompare(right.date) || left.id.localeCompare(right.id)));
+    return { byId, children };
+  };
+
+  const validBranchSelections = (value, entries = allKnownEntries()) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const { byId, children } = branchGraph(entries);
+    return Object.fromEntries(Object.entries(value).filter(([parentId, childId]) => typeof childId === "string"
+      && byId.has(parentId) && byId.get(childId)?.handoffParentId === parentId && (children.get(parentId) || []).length > 1));
+  };
+
+  const loadBranchSelections = () => {
+    branchSelections = validBranchSelections(safeRead(BRANCH_SELECTION_KEY, {}));
+  };
+
+  const saveBranchSelections = (next) => {
+    if (!safeWrite(BRANCH_SELECTION_KEY, next)) return false;
+    branchSelections = next;
+    return true;
+  };
+
+  const selectedBranchTail = (root, graph = branchGraph()) => {
+    let current = root;
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      const children = graph.children.get(current.id) || [];
+      if (children.length === 1) {
+        [current] = children;
+        continue;
+      }
+      if (children.length > 1 && branchSelections[current.id]) {
+        const selected = children.find((child) => child.id === branchSelections[current.id]);
+        if (selected) {
+          current = selected;
+          continue;
+        }
+      }
+      break;
+    }
+    return current;
   };
 
   const memberFor = (id) => diary.members.find((member) => member.id === id) || {
@@ -232,14 +296,55 @@
     if (!handoff) {
       elements.turnStatus.textContent = "最初のページを待っています。";
       elements.turnDetail.textContent = "順番は、ページが一つできてから案内します。";
+      elements.turnNotice.hidden = true;
       return;
     }
     const next = memberFor(handoff.nextAuthor);
-    const parent = allEntries().find((entry) => entry.id === handoff.parentId);
+    const parent = allKnownEntries().find((entry) => entry.id === handoff.parentId);
     elements.turnStatus.textContent = `いまは ${next.emoji} ${next.name}さんの番です。`;
     elements.turnDetail.textContent = parent
       ? `「${memberFor(parent.author).name}」の「${parent.title}」を受け取り、次の人を案内しています。順番外の投稿も消しません。`
       : "次の人を案内しています。順番外の投稿も消しません。";
+    elements.turnNotice.hidden = !handoffNotice;
+    elements.turnNotice.textContent = handoffNotice;
+  };
+
+  const renderBranches = () => {
+    const graph = branchGraph();
+    const forks = [...graph.children.entries()].filter(([, children]) => children.length > 1);
+    elements.branchPanel.hidden = forks.length === 0;
+    if (!forks.length) {
+      elements.branchList.replaceChildren();
+      return;
+    }
+    const fragment = document.createDocumentFragment();
+    forks.forEach(([parentId, children]) => {
+      const parent = graph.byId.get(parentId);
+      const group = document.createElement("section");
+      group.className = "branch-group";
+      const heading = document.createElement("p");
+      heading.className = "branch-parent";
+      heading.textContent = `共通の親: ${memberFor(parent.author).emoji} ${memberFor(parent.author).name}「${parent.title}」`;
+      const options = document.createElement("div");
+      options.className = "branch-options";
+      children.forEach((child) => {
+        const tail = selectedBranchTail(child, graph);
+        const option = document.createElement("button");
+        const selected = branchSelections[parentId] === child.id;
+        option.type = "button";
+        option.className = "branch-option";
+        option.dataset.branchParent = parentId;
+        option.dataset.branchRoot = child.id;
+        option.setAttribute("aria-pressed", String(selected));
+        const author = memberFor(child.author);
+        const tailAuthor = memberFor(tail.author);
+        option.textContent = `先頭: ${author.emoji} ${author.name}「${child.title}」 / 末尾: ${tailAuthor.emoji} ${tailAuthor.name}「${tail.title}」${selected ? "（採用中）" : ""}`;
+        options.append(option);
+      });
+      group.append(heading, options);
+      fragment.append(group);
+    });
+    elements.branchList.replaceChildren(fragment);
   };
 
   const replyText = (entry, entriesById) => {
@@ -373,6 +478,7 @@
     renderFilters();
     renderEntries();
     renderTurn();
+    renderBranches();
     elements.entryRegion.setAttribute("aria-busy", "false");
   };
 
@@ -437,6 +543,7 @@
     if (!safeWrite(STORAGE_KEY, next)) return;
     localEntries = next;
     const nextHandoff = { memberOrder: memberOrder(), parentId: entry.id, nextAuthor: nextAuthorAfter(entry.author) };
+    handoffNotice = "";
     const handoffSaved = saveHandoff(nextHandoff);
     elements.form.reset();
     updateDraftStatus(safeRemove(DRAFT_KEY)
@@ -446,6 +553,7 @@
     renderFilters();
     renderEntries();
     renderTurn();
+    renderBranches();
     if (!handoffSaved) setTransferStatus("投稿は保存しましたが、次の番の保存には失敗しました。次の受け渡し前に確認してください。", "error");
     const newEntry = document.querySelector(`#entry-${entry.id}`);
     if (newEntry) newEntry.focus({ preventScroll: true });
@@ -472,7 +580,10 @@
   const revealEntry = (event, targetId) => {
     const target = allEntries().find((entry) => entry.id === targetId);
     if (!target) return;
-    if (selectedAuthor === "all" && !searchTerm) return;
+    const query = searchTerm.toLocaleLowerCase("ja-JP");
+    const visible = (selectedAuthor === "all" || target.author === selectedAuthor)
+      && (!query || [target.title, target.body, target.mood, memberFor(target.author).name].join(" ").toLocaleLowerCase("ja-JP").includes(query));
+    if (visible) return;
     event.preventDefault();
     selectedAuthor = "all";
     searchTerm = "";
@@ -495,6 +606,8 @@
       if (safeWrite(STORAGE_KEY, next)) {
         localEntries = next;
         renderEntries();
+        renderTurn();
+        renderBranches();
       }
       return;
     }
@@ -512,7 +625,27 @@
     if (safeWrite(STORAGE_KEY, next)) {
       localEntries = next;
       renderEntries();
+      renderTurn();
+      renderBranches();
     }
+  });
+
+  elements.branchList.addEventListener("click", (event) => {
+    const option = event.target.closest("button[data-branch-parent][data-branch-root]");
+    if (!option) return;
+    const graph = branchGraph();
+    const parentId = option.dataset.branchParent;
+    const root = graph.byId.get(option.dataset.branchRoot);
+    if (!root || root.handoffParentId !== parentId) return;
+    const nextSelections = { ...branchSelections, [parentId]: root.id };
+    if (!saveBranchSelections(nextSelections)) return;
+    const tail = selectedBranchTail(root, graph);
+    const next = { memberOrder: memberOrder(), parentId: tail.id, nextAuthor: nextAuthorAfter(tail.author) };
+    handoffNotice = saveHandoff(next)
+      ? `「${memberFor(root.author).name}」から始まる枝を、この端末で次に回す枝として採用しました。`
+      : "枝の選択は保存しましたが、次の番の保存には失敗しました。";
+    renderTurn();
+    renderBranches();
   });
 
   const setTransferStatus = (message, kind = "") => {
@@ -550,7 +683,7 @@
   }[field]);
 
   const validateImportedEntries = (data) => {
-    if (!data || ![1, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
+    if (!data || ![1, 2, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
       throw new Error("対応していないファイル形式です。");
     }
     const knownEntries = new Map([...diary.entries, ...localEntries].map((entry) => [entry.id, entry]));
@@ -567,7 +700,7 @@
       if (typeof entry.title !== "string" || !entry.title || entry.title.length > limits.title) throw new Error(`${index + 1}件目の見出しが正しくありません。`);
       if (typeof entry.body !== "string" || !entry.body || entry.body.length > limits.body) throw new Error(`${index + 1}件目の本文が正しくありません。`);
       if (entry.replyTo !== null && entry.replyTo !== undefined && typeof entry.replyTo !== "string") throw new Error(`${index + 1}件目の返信先が正しくありません。`);
-      if (data.version === TRANSFER_VERSION && entry.handoffParentId !== null && entry.handoffParentId !== undefined && typeof entry.handoffParentId !== "string") throw new Error(`${index + 1}件目の引き継ぎ元が正しくありません。`);
+      if (data.version >= 2 && entry.handoffParentId !== null && entry.handoffParentId !== undefined && typeof entry.handoffParentId !== "string") throw new Error(`${index + 1}件目の引き継ぎ元が正しくありません。`);
       const candidate = {
         ...entry, cycle: null, local: true, origin: "imported", deleted: Boolean(entry.deleted), replyTo: entry.replyTo || null,
         handoffParentId: typeof entry.handoffParentId === "string" ? entry.handoffParentId : null
@@ -580,19 +713,19 @@
         return;
       }
       importEntries.set(candidate.id, candidate);
-      additions.push(candidate);
+      additions.push({ entry: candidate, sourceIndex: index });
     });
     const knownIds = new Set([...knownEntries.keys(), ...importEntries.keys()]);
-    additions.forEach((entry, index) => {
+    additions.forEach(({ entry, sourceIndex }) => {
       if (entry.replyTo && !knownIds.has(entry.replyTo)) {
-        throw new Error(`${index + 1}件目の返信先が見つかりません。`);
+        throw new Error(`${sourceIndex + 1}件目の返信先が見つかりません。`);
       }
       if (entry.handoffParentId && !knownIds.has(entry.handoffParentId)) {
-        throw new Error(`${index + 1}件目の引き継ぎ元が見つかりません。`);
+        throw new Error(`${sourceIndex + 1}件目の引き継ぎ元が見つかりません。`);
       }
     });
-    const importedHandoff = data.version === TRANSFER_VERSION ? data.handoff : null;
-    if (data.version === TRANSFER_VERSION && !isHandoff(importedHandoff, knownIds)) {
+    const importedHandoff = data.version >= 2 ? data.handoff : null;
+    if (data.version >= 2 && !isHandoff(importedHandoff, knownIds)) {
       throw new Error("引き継ぎ情報が正しくありません。何も取り込みませんでした。");
     }
     if (importedHandoff) {
@@ -601,12 +734,26 @@
         throw new Error("引き継ぎ情報の次の書き手が親ページと一致しません。何も取り込みませんでした。");
       }
     }
-    return { additions, reencountered, handoff: importedHandoff, legacy: data.version === 1 };
+    const combinedEntries = [...knownEntries.values(), ...importEntries.values()];
+    if (data.version === TRANSFER_VERSION && (!data.branchSelections || typeof data.branchSelections !== "object" || Array.isArray(data.branchSelections))) {
+      throw new Error("分岐の選択情報が正しくありません。何も取り込みませんでした。");
+    }
+    const importedSelections = data.version === TRANSFER_VERSION ? validBranchSelections(data.branchSelections, combinedEntries) : {};
+    if (data.version === TRANSFER_VERSION && Object.keys(importedSelections).length !== Object.keys(data.branchSelections).length) {
+      throw new Error("分岐の選択先が見つかりません。何も取り込みませんでした。");
+    }
+    return { additions: additions.map(({ entry }) => entry), reencountered, handoff: importedHandoff, branchSelections: importedSelections, legacy: data.version === 1 };
   };
 
   elements.exportLocal.addEventListener("click", () => {
     const outgoingHandoff = handoff || defaultHandoff();
-    const payload = { version: TRANSFER_VERSION, exportedAt: new Date().toISOString(), entries: localEntries.map(exportableEntry), handoff: outgoingHandoff };
+    const payload = {
+      version: TRANSFER_VERSION,
+      exportedAt: new Date().toISOString(),
+      entries: localEntries.map(exportableEntry),
+      handoff: outgoingHandoff,
+      branchSelections: validBranchSelections(branchSelections)
+    };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -629,12 +776,16 @@
       const next = [...localEntries, ...incoming.additions];
       if (!safeWrite(STORAGE_KEY, next)) return;
       localEntries = next;
+      if (incoming.handoff) handoffNotice = "";
       const handoffSaved = !incoming.handoff || saveHandoff(incoming.handoff);
+      const missingSelections = Object.fromEntries(Object.entries(incoming.branchSelections).filter(([parentId]) => !branchSelections[parentId]));
+      const selectionsSaved = Object.keys(missingSelections).length === 0 || saveBranchSelections({ ...branchSelections, ...missingSelections });
       elements.importFile.value = "";
       renderEntries();
       renderTurn();
-      if (!handoffSaved) {
-        setTransferStatus(`${incoming.additions.length}件は取り込みましたが、次の番の保存には失敗しました。`, "error");
+      renderBranches();
+      if (!handoffSaved || !selectionsSaved) {
+        setTransferStatus(`${incoming.additions.length}件は取り込みましたが、${!handoffSaved ? "次の番" : "分岐の選択"}の保存には失敗しました。`, "error");
       } else if (incoming.legacy) {
         setTransferStatus(`${incoming.additions.length}件を旧形式から取り込みました。次の番はこの端末で推定しています。`);
       } else {
@@ -657,6 +808,7 @@
       }
       diary = data;
       loadLocalEntries();
+      loadBranchSelections();
       loadHandoff();
       render();
       restoreDraft();

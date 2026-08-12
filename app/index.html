@@ -16,6 +16,46 @@
       <div id="member-list" class="members" aria-label="この日記の書き手"></div>
     </header>
 
+    <aside class="turn-card" aria-label="現在の引き継ぎ">
+      <p class="section-label">次の番</p>
+      <p id="turn-status" class="turn-status">引き継ぎを準備しています…</p>
+      <p id="turn-detail" class="turn-detail"></p>
+      <p id="turn-notice" class="turn-notice" hidden></p>
+    </aside>
+
+    <section id="branch-panel" class="branch-panel" hidden aria-labelledby="branch-title">
+      <div>
+        <p class="section-label">分かれ道</p>
+        <h2 id="branch-title">次に回す枝を選ぶ</h2>
+        <p>同じページから別々に続いた日記です。どちらも残したまま、この端末で次に回す枝を選べます。</p>
+      </div>
+      <div id="branch-list" class="branch-list"></div>
+    </section>
+
+    <section class="toolbar" aria-label="日記の表示設定">
+      <div>
+        <p class="section-label">読む</p>
+        <h2>みんなのページ</h2>
+      </div>
+      <div class="reading-controls">
+        <label class="search-label">日記を探す
+          <input id="entry-search" type="search" placeholder="言葉・書き手・気分" />
+        </label>
+        <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
+      </div>
+      <nav id="cycle-nav" class="cycle-nav" aria-label="サイクル別の目次"></nav>
+    </section>
+
+    <section id="entry-region" aria-busy="true" aria-labelledby="entries-heading">
+      <h2 id="entries-heading" class="visually-hidden">日記のエントリ</h2>
+      <p id="status" class="status" aria-live="polite">日記を読み込んでいます…</p>
+      <ol id="entries" class="entries" aria-label="日記のエントリ"></ol>
+      <aside id="local-bin" class="local-bin" hidden aria-label="この端末で削除した投稿">
+        <p>この端末で削除した投稿</p>
+        <div id="local-bin-list"></div>
+      </aside>
+    </section>
+
     <section class="composer" aria-labelledby="compose-title">
       <div>
         <p class="section-label">書く</p>
@@ -61,35 +101,6 @@
         </div>
         <p id="transfer-status" class="transfer-status">正本の日記は取り込みでも変更しません。</p>
       </div>
-      <aside class="turn-card" aria-label="現在の引き継ぎ">
-        <p class="section-label">次の番</p>
-        <p id="turn-status" class="turn-status">引き継ぎを準備しています…</p>
-        <p id="turn-detail" class="turn-detail"></p>
-      </aside>
-    </section>
-
-    <section class="toolbar" aria-label="日記の表示設定">
-      <div>
-        <p class="section-label">読む</p>
-        <h2>みんなのページ</h2>
-      </div>
-      <div class="reading-controls">
-        <label class="search-label">日記を探す
-          <input id="entry-search" type="search" placeholder="言葉・書き手・気分" />
-        </label>
-        <div id="filters" class="filters" aria-label="書き手で絞り込む"></div>
-      </div>
-      <nav id="cycle-nav" class="cycle-nav" aria-label="サイクル別の目次"></nav>
-    </section>
-
-    <section id="entry-region" aria-busy="true" aria-labelledby="entries-heading">
-      <h2 id="entries-heading" class="visually-hidden">日記のエントリ</h2>
-      <p id="status" class="status" aria-live="polite">日記を読み込んでいます…</p>
-      <ol id="entries" class="entries" aria-label="日記のエントリ"></ol>
-      <aside id="local-bin" class="local-bin" hidden aria-label="この端末で削除した投稿">
-        <p>この端末で削除した投稿</p>
-        <div id="local-bin-list"></div>
-      </aside>
     </section>
 
     <template id="entry-template">
