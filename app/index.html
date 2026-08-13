@@ -16,6 +16,30 @@
       <div id="member-list" class="members" aria-label="この日記の書き手"></div>
     </header>
 
+    <section class="terminal-card" aria-labelledby="terminal-title">
+      <div>
+        <p class="section-label">この端末</p>
+        <h2 id="terminal-title">私は誰として開く？</h2>
+        <p class="terminal-note">これは認証ではありません。このブラウザが名乗る役割を保存するだけで、ほかの端末が同じ名前で書くことは止められません。</p>
+      </div>
+      <label>この端末の役割
+        <select id="terminal-author"></select>
+      </label>
+      <p id="terminal-status" class="terminal-status" aria-live="polite"></p>
+      <details class="invite">
+        <summary>新しい書き手を招待する</summary>
+        <p>招待はこの端末に保存され、version 4 の受け渡しに載ります。正本の日記は変更しません。</p>
+        <div class="invite-fields">
+          <label>ID <input id="participant-id" type="text" maxlength="40" placeholder="mika" /></label>
+          <label>表示名 <input id="participant-name" type="text" maxlength="40" placeholder="みか" /></label>
+          <label>絵文字 <input id="participant-emoji" type="text" maxlength="8" placeholder="🌿" /></label>
+          <label>色 <input id="participant-color" type="text" maxlength="7" placeholder="#5c9b7d" /></label>
+        </div>
+        <button id="invite-participant" class="quiet-action" type="button">この端末に招待する</button>
+        <p id="invite-status" class="terminal-status" aria-live="polite"></p>
+      </details>
+    </section>
+
     <aside class="turn-card" aria-label="現在の引き継ぎ">
       <p class="section-label">次の番</p>
       <p id="turn-status" class="turn-status">引き継ぎを準備しています…</p>
@@ -90,7 +114,7 @@
         <div>
           <p class="section-label">渡す</p>
           <h3 id="transfer-title">この端末のページを持ち運ぶ</h3>
-          <p>書いた投稿と次の番を JSON として渡せます。同じ内容のページは再会として飛ばし、同じ ID で内容が違うときだけ取り込みを止めます。</p>
+          <p>書いた投稿・招待した書き手・次の番を JSON として渡せます。同じ ID で本文やプロフィールが食い違うときは、何も取り込みません。</p>
         </div>
         <div class="transfer-actions">
           <button id="export-local" class="quiet-action" type="button">この端末の投稿を書き出す</button>

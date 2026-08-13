@@ -21,6 +21,17 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .members { display: flex; flex-wrap: wrap; gap: .5rem; }
 .member-chip { display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .65rem; border: 1px solid color-mix(in srgb, var(--member-color) 38%, white); border-radius: 100px; background: color-mix(in srgb, var(--member-color) 10%, white); color: #443e38; font-size: .82rem; }
 
+.terminal-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, .55fr); gap: .8rem 1.2rem; align-items: end; margin-top: 1.15rem; padding: 1rem 1.1rem; border: 1px solid #d7d0c6; border-radius: .75rem; background: #fffdfa; }
+.terminal-card h2 { margin: .25rem 0 .35rem; font-size: 1.1rem; }
+.terminal-note, .terminal-status, .invite p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
+.terminal-card > label, .invite-fields label { display: grid; gap: .35rem; color: #4c4640; font-size: .82rem; font-weight: 700; }
+.terminal-card select, .invite-fields input { width: 100%; padding: .52rem .6rem; border: 1px solid #d8c8be; border-radius: .5rem; color: var(--ink); background: #fffdfa; }
+.terminal-status { grid-column: 1 / -1; }
+.invite { grid-column: 1 / -1; padding-top: .8rem; border-top: 1px dashed var(--line); }
+.invite summary { cursor: pointer; color: #4c4640; font-size: .86rem; font-weight: 700; }
+.invite p { margin: .55rem 0 .75rem; }
+.invite-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; margin-bottom: .7rem; }
+
 .composer { margin-top: 3rem; padding: 1.5rem; border: 1px solid #e7c9be; border-radius: .9rem; background: #fff8f4; }
 .composer h2 { margin: .28rem 0 .45rem; font-size: 1.4rem; }
 .composer-note { margin-bottom: 1.25rem; color: var(--muted); font-size: .9rem; line-height: 1.65; }
@@ -107,6 +118,7 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
   .filters { justify-content: start; margin-top: 1rem; }
   .cycle-nav { justify-content: start; }
   .form-row { grid-template-columns: 1fr; }
+  .terminal-card, .invite-fields { grid-template-columns: 1fr; }
   .form-actions { align-items: stretch; }
   .primary-action, .quiet-action { flex: 1 1 auto; }
   .entry article { gap: .8rem; }

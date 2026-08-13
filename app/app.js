@@ -4,9 +4,11 @@
   const DATA_URL = "data/diary.json";
   const STORAGE_KEY = "kawaribanko.local-entries.v1";
   const DRAFT_KEY = "kawaribanko.draft.v1";
-  const TRANSFER_VERSION = 3;
+  const TRANSFER_VERSION = 4;
   const HANDOFF_KEY = "kawaribanko.handoff.v1";
   const BRANCH_SELECTION_KEY = "kawaribanko.branch-selections.v1";
+  const PARTICIPANT_KEY = "kawaribanko.participants.v1";
+  const TERMINAL_AUTHOR_KEY = "kawaribanko.terminal-author.v1";
   const limits = { mood: 8, title: 80, body: 1200 };
   const elements = {
     title: document.querySelector("#diary-title"),
@@ -37,7 +39,15 @@
     turnNotice: document.querySelector("#turn-notice"),
     branchPanel: document.querySelector("#branch-panel"),
     branchList: document.querySelector("#branch-list"),
-    cycleNav: document.querySelector("#cycle-nav")
+    cycleNav: document.querySelector("#cycle-nav"),
+    terminalAuthor: document.querySelector("#terminal-author"),
+    terminalStatus: document.querySelector("#terminal-status"),
+    participantId: document.querySelector("#participant-id"),
+    participantName: document.querySelector("#participant-name"),
+    participantEmoji: document.querySelector("#participant-emoji"),
+    participantColor: document.querySelector("#participant-color"),
+    inviteParticipant: document.querySelector("#invite-participant"),
+    inviteStatus: document.querySelector("#invite-status")
   };
 
   let diary = null;
@@ -47,6 +57,8 @@
   let handoff = null;
   let branchSelections = {};
   let handoffNotice = "";
+  let participants = [];
+  let terminalAuthor = null;
 
   const formatDate = (date) => {
     const parsed = new Date(`${date}T00:00:00`);
@@ -115,10 +127,48 @@
       : [];
   };
 
+  const isParticipant = (member) => Boolean(member && typeof member === "object"
+    && typeof member.id === "string" && /^[a-z][a-z0-9-]{0,39}$/.test(member.id) && member.id !== "owner"
+    && typeof member.name === "string" && member.name.trim().length > 0 && member.name.trim().length <= 40
+    && typeof member.emoji === "string" && member.emoji.trim().length > 0 && member.emoji.length <= limits.mood
+    && typeof member.color === "string" && /^#[0-9a-fA-F]{6}$/.test(member.color));
+
+  const participantIdentity = (member) => ({
+    name: member.name.trim(),
+    emoji: member.emoji.trim(),
+    color: member.color.toLowerCase()
+  });
+
+  const participantDifferences = (left, right) => Object.keys(participantIdentity(left))
+    .filter((key) => participantIdentity(left)[key] !== participantIdentity(right)[key]);
+
+  const normalizedParticipant = (member) => ({ id: member.id, ...participantIdentity(member) });
+
+  const loadParticipants = () => {
+    const stored = safeRead(PARTICIPANT_KEY, []);
+    const baseIds = new Set(diary.members.map((member) => member.id));
+    const known = new Set();
+    participants = Array.isArray(stored) ? stored.filter((member) => isParticipant(member)
+      && !baseIds.has(member.id) && !known.has(member.id) && Boolean(known.add(member.id))).map(normalizedParticipant) : [];
+  };
+
+  const saveParticipants = (next) => {
+    if (!safeWrite(PARTICIPANT_KEY, next)) return false;
+    participants = next;
+    return true;
+  };
+
+  const loadTerminalAuthor = () => {
+    const stored = safeRead(TERMINAL_AUTHOR_KEY, null);
+    terminalAuthor = typeof stored === "string" && writers().some((member) => member.id === stored) ? stored : null;
+  };
+
   const allEntries = () => [...diary.entries, ...localEntries.filter((entry) => !entry.deleted)];
   const allKnownEntries = () => [...diary.entries, ...localEntries];
 
-  const memberOrder = () => diary.members.filter((member) => member.id !== "owner").map((member) => member.id);
+  const members = () => [...diary.members, ...participants];
+  const writers = () => members().filter((member) => member.id !== "owner");
+  const memberOrder = () => writers().map((member) => member.id);
 
   const nextAuthorAfter = (author, order = memberOrder()) => {
     const index = order.indexOf(author);
@@ -136,17 +186,19 @@
     return latest ? { memberOrder: order, parentId: latest.id, nextAuthor: nextAuthorAfter(latest.author, order) } : null;
   };
 
-  const isHandoff = (value, knownIds = new Set(allKnownEntries().map((entry) => entry.id))) => {
-    const order = memberOrder();
+  const isHandoff = (value, knownIds = new Set(allKnownEntries().map((entry) => entry.id)), version = TRANSFER_VERSION, order = memberOrder()) => {
+    const legacyOrder = diary.members.filter((member) => member.id !== "owner").map((member) => member.id);
+    const expected = version < 4 ? legacyOrder : null;
     return Boolean(value && typeof value === "object" && Array.isArray(value.memberOrder)
-      && value.memberOrder.length === order.length && value.memberOrder.every((id, index) => id === order[index])
+      && value.memberOrder.length > 0 && new Set(value.memberOrder).size === value.memberOrder.length
+      && (expected ? value.memberOrder.length === expected.length && value.memberOrder.every((id, index) => id === expected[index]) : value.memberOrder.every((id) => order.includes(id)))
       && typeof value.parentId === "string" && knownIds.has(value.parentId)
-      && typeof value.nextAuthor === "string" && order.includes(value.nextAuthor));
+      && typeof value.nextAuthor === "string" && value.memberOrder.includes(value.nextAuthor));
   };
 
   const loadHandoff = () => {
     const stored = safeRead(HANDOFF_KEY, null);
-    if (stored && !isHandoff(stored)) {
+    if (stored && !isHandoff(stored, undefined, TRANSFER_VERSION)) {
       handoff = defaultHandoff();
       handoffNotice = "保存されていた引き継ぎ先が見つからないため、表示中の最新ページから次の番を案内し直しました。";
       return;
@@ -212,7 +264,32 @@
     return current;
   };
 
-  const memberFor = (id) => diary.members.find((member) => member.id === id) || {
+  const branchRootOnPath = (entryId, parentId, graph = branchGraph(allKnownEntries())) => {
+    let current = graph.byId.get(entryId);
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      if (current.handoffParentId === parentId) return current.id;
+      current = graph.byId.get(current.handoffParentId);
+    }
+    return null;
+  };
+
+  const handoffSelectionConflict = (candidate, selections = branchSelections, entries = allKnownEntries()) => {
+    if (!candidate) return false;
+    const graph = branchGraph(entries);
+    let current = graph.byId.get(candidate.parentId);
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      const parentId = current.handoffParentId;
+      if (parentId && selections[parentId] && selections[parentId] !== current.id) return true;
+      current = graph.byId.get(parentId);
+    }
+    return false;
+  };
+
+  const memberFor = (id) => members().find((member) => member.id === id) || {
     id,
     name: "不明な書き手",
     emoji: "✏️",
@@ -221,7 +298,7 @@
 
   const renderMembers = () => {
     const fragment = document.createDocumentFragment();
-    diary.members.forEach((member) => {
+    members().forEach((member) => {
       const chip = document.createElement("span");
       chip.className = "member-chip";
       chip.style.setProperty("--member-color", member.color);
@@ -233,7 +310,7 @@
 
   const renderAuthors = () => {
     const fragment = document.createDocumentFragment();
-    diary.members.filter((member) => member.id !== "owner").forEach((member) => {
+    writers().forEach((member) => {
       const option = document.createElement("option");
       option.value = member.id;
       option.textContent = `${member.emoji} ${member.name}`;
@@ -261,7 +338,7 @@
 
   const renderFilters = () => {
     const fragment = document.createDocumentFragment();
-    [{ id: "all", name: "すべて", emoji: "📖", color: "#d95f45" }, ...diary.members].forEach((member) => {
+    [{ id: "all", name: "すべて", emoji: "📖", color: "#d95f45" }, ...members()].forEach((member) => {
       const button = document.createElement("button");
       const isSelected = member.id === selectedAuthor;
       button.className = "filter";
@@ -301,12 +378,35 @@
     }
     const next = memberFor(handoff.nextAuthor);
     const parent = allKnownEntries().find((entry) => entry.id === handoff.parentId);
-    elements.turnStatus.textContent = `いまは ${next.emoji} ${next.name}さんの番です。`;
+    elements.turnStatus.textContent = terminalAuthor === handoff.nextAuthor
+      ? `あなたの番です。${next.emoji} ${next.name}として書けます。`
+      : `いまは ${next.emoji} ${next.name}さんの番です。`;
     elements.turnDetail.textContent = parent
       ? `「${memberFor(parent.author).name}」の「${parent.title}」を受け取り、次の人を案内しています。順番外の投稿も消しません。`
       : "次の人を案内しています。順番外の投稿も消しません。";
     elements.turnNotice.hidden = !handoffNotice;
     elements.turnNotice.textContent = handoffNotice;
+  };
+
+  const renderTerminal = () => {
+    const previous = terminalAuthor || "";
+    const fragment = document.createDocumentFragment();
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "名乗らない";
+    fragment.append(blank);
+    writers().forEach((member) => {
+      const option = document.createElement("option");
+      option.value = member.id;
+      option.textContent = `${member.emoji} ${member.name}`;
+      fragment.append(option);
+    });
+    elements.terminalAuthor.replaceChildren(fragment);
+    elements.terminalAuthor.value = previous;
+    const member = terminalAuthor && memberFor(terminalAuthor);
+    elements.terminalStatus.textContent = member
+      ? `この端末は ${member.emoji} ${member.name}として名乗っています。`
+      : "この端末は役割を名乗っていません。";
   };
 
   const renderBranches = () => {
@@ -331,6 +431,8 @@
         const tail = selectedBranchTail(child, graph);
         const option = document.createElement("button");
         const selected = branchSelections[parentId] === child.id;
+        const guiding = !selected && !branchSelections[parentId] && handoff
+          && branchRootOnPath(handoff.parentId, parentId, branchGraph(allKnownEntries())) === child.id;
         option.type = "button";
         option.className = "branch-option";
         option.dataset.branchParent = parentId;
@@ -338,7 +440,7 @@
         option.setAttribute("aria-pressed", String(selected));
         const author = memberFor(child.author);
         const tailAuthor = memberFor(tail.author);
-        option.textContent = `先頭: ${author.emoji} ${author.name}「${child.title}」 / 末尾: ${tailAuthor.emoji} ${tailAuthor.name}「${tail.title}」${selected ? "（採用中）" : ""}`;
+        option.textContent = `先頭: ${author.emoji} ${author.name}「${child.title}」 / 末尾: ${tailAuthor.emoji} ${tailAuthor.name}「${tail.title}」${selected ? "（採用中）" : guiding ? "（番を案内中・未選択）" : ""}`;
         options.append(option);
       });
       group.append(heading, options);
@@ -475,6 +577,7 @@
     elements.subtitle.textContent = diary.subtitle || "みんなで回す、ひとつの日記帳";
     renderMembers();
     renderAuthors();
+    renderTerminal();
     renderFilters();
     renderEntries();
     renderTurn();
@@ -516,7 +619,7 @@
 
   const validateEntry = (entry) => {
     const messages = [];
-    if (!diary.members.some((member) => member.id === entry.author && member.id !== "owner")) messages.push("書き手を選んでください。");
+    if (!writers().some((member) => member.id === entry.author)) messages.push("書き手を選んでください。");
     if (!entry.mood || entry.mood.length > limits.mood) messages.push(`気分は1〜${limits.mood}文字で書いてください。`);
     if (!entry.title || entry.title.length > limits.title) messages.push(`見出しは1〜${limits.title}文字で書いてください。`);
     if (!entry.body || entry.body.length > limits.body) messages.push(`本文は1〜${limits.body}文字で書いてください。`);
@@ -562,6 +665,48 @@
   elements.clearDraft.addEventListener("click", () => {
     elements.form.reset();
     updateDraftStatus(safeRemove(DRAFT_KEY) ? "下書きを消しました。" : "下書きを消去できませんでした。");
+  });
+
+  elements.terminalAuthor.addEventListener("change", () => {
+    const next = elements.terminalAuthor.value || null;
+    terminalAuthor = writers().some((member) => member.id === next) ? next : null;
+    if (terminalAuthor) safeWrite(TERMINAL_AUTHOR_KEY, terminalAuthor);
+    else safeRemove(TERMINAL_AUTHOR_KEY);
+    if (terminalAuthor) elements.author.value = terminalAuthor;
+    renderTerminal();
+    renderTurn();
+  });
+
+  elements.inviteParticipant.addEventListener("click", () => {
+    const candidate = {
+      id: elements.participantId.value.trim(),
+      name: elements.participantName.value.trim(),
+      emoji: elements.participantEmoji.value.trim(),
+      color: elements.participantColor.value.trim()
+    };
+    if (!isParticipant(candidate)) {
+      elements.inviteStatus.textContent = "ID は英小文字から始まる40文字以内、表示名・絵文字・#RRGGBB の色をすべて入れてください。";
+      return;
+    }
+    const existing = members().find((member) => member.id === candidate.id);
+    if (existing) {
+      elements.inviteStatus.textContent = participantDifferences(existing, candidate).length
+        ? `ID「${candidate.id}」は、すでに別のプロフィールで使われています。`
+        : `ID「${candidate.id}」は、すでにこの端末の書き手です。`;
+      return;
+    }
+    const next = [...participants, normalizedParticipant(candidate)];
+    if (!saveParticipants(next)) {
+      elements.inviteStatus.textContent = "招待をこの端末へ保存できませんでした。";
+      return;
+    }
+    [elements.participantId, elements.participantName, elements.participantEmoji, elements.participantColor].forEach((field) => { field.value = ""; });
+    elements.inviteStatus.textContent = `${candidate.emoji} ${candidate.name}をこの端末に招待しました。次の書き出しで渡せます。`;
+    renderMembers();
+    renderAuthors();
+    renderTerminal();
+    renderFilters();
+    renderTurn();
   });
 
   elements.filters.addEventListener("click", (event) => {
@@ -683,18 +828,36 @@
   }[field]);
 
   const validateImportedEntries = (data) => {
-    if (!data || ![1, 2, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
+    if (!data || ![1, 2, 3, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
       throw new Error("対応していないファイル形式です。");
     }
     const knownEntries = new Map([...diary.entries, ...localEntries].map((entry) => [entry.id, entry]));
     const importEntries = new Map();
-    const members = new Set(diary.members.filter((member) => member.id !== "owner").map((member) => member.id));
+    const knownProfiles = new Map(members().map((member) => [member.id, member]));
+    const importedProfiles = new Map();
+    const participantAdditions = [];
+    if (data.version === TRANSFER_VERSION) {
+      if (!Array.isArray(data.participants)) throw new Error("招待した書き手の情報が正しくありません。何も取り込みませんでした。");
+      data.participants.forEach((member, index) => {
+        if (!isParticipant(member)) throw new Error(`${index + 1}人目の書き手情報が正しくありません。何も取り込みませんでした。`);
+        const candidate = normalizedParticipant(member);
+        const previous = knownProfiles.get(candidate.id) || importedProfiles.get(candidate.id);
+        if (previous) {
+          const differences = participantDifferences(previous, candidate);
+          if (differences.length) throw new Error(`書き手ID「${candidate.id}」は ${differences.map((field) => ({ name: "表示名", emoji: "絵文字", color: "色" }[field])).join("・")} が既存のプロフィールと食い違います。何も取り込みませんでした。`);
+          return;
+        }
+        importedProfiles.set(candidate.id, candidate);
+        participantAdditions.push(candidate);
+      });
+    }
+    const availableAuthors = new Set([...knownProfiles.keys(), ...importedProfiles.keys()]);
     const additions = [];
     const reencountered = [];
     data.entries.forEach((entry, index) => {
       if (!entry || typeof entry !== "object") throw new Error(`${index + 1}件目の形式が正しくありません。`);
       if (typeof entry.id !== "string" || !entry.id.startsWith("local-") || entry.id.length > 120) throw new Error(`${index + 1}件目のIDが正しくありません。`);
-      if (!members.has(entry.author)) throw new Error(`${index + 1}件目の書き手がこの日記帳にいません。`);
+      if (!availableAuthors.has(entry.author) || entry.author === "owner") throw new Error(`${index + 1}件目の書き手がこの日記帳にいません。`);
       if (typeof entry.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(entry.date)) throw new Error(`${index + 1}件目の日付が正しくありません。`);
       if (typeof entry.mood !== "string" || !entry.mood || entry.mood.length > limits.mood) throw new Error(`${index + 1}件目の気分が正しくありません。`);
       if (typeof entry.title !== "string" || !entry.title || entry.title.length > limits.title) throw new Error(`${index + 1}件目の見出しが正しくありません。`);
@@ -725,24 +888,29 @@
       }
     });
     const importedHandoff = data.version >= 2 ? data.handoff : null;
-    if (data.version >= 2 && !isHandoff(importedHandoff, knownIds)) {
+    const combinedOrder = [...members(), ...participantAdditions].filter((member) => member.id !== "owner").map((member) => member.id);
+    if (data.version >= 2 && !isHandoff(importedHandoff, knownIds, data.version, combinedOrder)) {
       throw new Error("引き継ぎ情報が正しくありません。何も取り込みませんでした。");
     }
     if (importedHandoff) {
       const parent = importEntries.get(importedHandoff.parentId) || knownEntries.get(importedHandoff.parentId);
-      if (importedHandoff.nextAuthor !== nextAuthorAfter(parent.author, importedHandoff.memberOrder)) {
+      if (!importedHandoff.memberOrder.includes(parent.author) || importedHandoff.nextAuthor !== nextAuthorAfter(parent.author, importedHandoff.memberOrder)) {
         throw new Error("引き継ぎ情報の次の書き手が親ページと一致しません。何も取り込みませんでした。");
       }
     }
     const combinedEntries = [...knownEntries.values(), ...importEntries.values()];
-    if (data.version === TRANSFER_VERSION && (!data.branchSelections || typeof data.branchSelections !== "object" || Array.isArray(data.branchSelections))) {
+    if (data.version >= 3 && data.branchSelections !== undefined && (!data.branchSelections || typeof data.branchSelections !== "object" || Array.isArray(data.branchSelections))) {
       throw new Error("分岐の選択情報が正しくありません。何も取り込みませんでした。");
     }
-    const importedSelections = data.version === TRANSFER_VERSION ? validBranchSelections(data.branchSelections, combinedEntries) : {};
-    if (data.version === TRANSFER_VERSION && Object.keys(importedSelections).length !== Object.keys(data.branchSelections).length) {
+    const incomingSelectionData = data.version >= 3 ? data.branchSelections || {} : {};
+    const importedSelections = data.version >= 3 ? validBranchSelections(incomingSelectionData, combinedEntries) : {};
+    if (data.version >= 3 && Object.keys(importedSelections).length !== Object.keys(incomingSelectionData).length) {
       throw new Error("分岐の選択先が見つかりません。何も取り込みませんでした。");
     }
-    return { additions: additions.map(({ entry }) => entry), reencountered, handoff: importedHandoff, branchSelections: importedSelections, legacy: data.version === 1 };
+    return {
+      additions: additions.map(({ entry }) => entry), reencountered, handoff: importedHandoff,
+      branchSelections: importedSelections, participants: participantAdditions, legacy: data.version === 1
+    };
   };
 
   elements.exportLocal.addEventListener("click", () => {
@@ -752,7 +920,8 @@
       exportedAt: new Date().toISOString(),
       entries: localEntries.map(exportableEntry),
       handoff: outgoingHandoff,
-      branchSelections: validBranchSelections(branchSelections)
+      branchSelections: validBranchSelections(branchSelections),
+      participants: writers().map(normalizedParticipant)
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -761,7 +930,7 @@
     link.download = `kawaribanko-${today()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    setTransferStatus(`${localEntries.length}件の端末内投稿と、次の番を書き出しました。`);
+    setTransferStatus(`${localEntries.length}件の端末内投稿、書き手、次の番を version 4 で書き出しました。`);
   });
 
   elements.importLocal.addEventListener("click", async () => {
@@ -774,13 +943,25 @@
       const data = JSON.parse(await file.text());
       const incoming = validateImportedEntries(data);
       const next = [...localEntries, ...incoming.additions];
+      const nextParticipants = [...participants, ...incoming.participants];
+      if (incoming.participants.length && !saveParticipants(nextParticipants)) {
+        setTransferStatus("招待した書き手の保存に失敗したため、何も取り込みませんでした。", "error");
+        return;
+      }
       if (!safeWrite(STORAGE_KEY, next)) return;
       localEntries = next;
-      if (incoming.handoff) handoffNotice = "";
-      const handoffSaved = !incoming.handoff || saveHandoff(incoming.handoff);
       const missingSelections = Object.fromEntries(Object.entries(incoming.branchSelections).filter(([parentId]) => !branchSelections[parentId]));
       const selectionsSaved = Object.keys(missingSelections).length === 0 || saveBranchSelections({ ...branchSelections, ...missingSelections });
+      const mergedSelections = { ...branchSelections, ...missingSelections };
+      const handoffConflictsWithChoice = incoming.handoff && handoffSelectionConflict(incoming.handoff, mergedSelections, [...diary.entries, ...next]);
+      if (incoming.handoff && !handoffConflictsWithChoice) handoffNotice = "";
+      if (handoffConflictsWithChoice) handoffNotice = "採用中の枝と食い違う受け渡しだったため、次の番はこの端末で選んだ枝のままにしました。";
+      const handoffSaved = !incoming.handoff || handoffConflictsWithChoice || saveHandoff(incoming.handoff);
       elements.importFile.value = "";
+      renderMembers();
+      renderAuthors();
+      renderTerminal();
+      renderFilters();
       renderEntries();
       renderTurn();
       renderBranches();
@@ -790,7 +971,9 @@
         setTransferStatus(`${incoming.additions.length}件を旧形式から取り込みました。次の番はこの端末で推定しています。`);
       } else {
         const skipped = incoming.reencountered.length ? `、再会した${incoming.reencountered.length}件はそのままにしました` : "";
-        setTransferStatus(`${incoming.additions.length}件を取り込みました${skipped}。正本の日記は変更していません。`);
+        const invited = incoming.participants.length ? `、${incoming.participants.length}人の書き手を招待しました` : "";
+        const held = handoffConflictsWithChoice ? "。この端末で採用中の枝と食い違うため、受け取った次の番は適用せず、ここで選んだ枝を保ちました" : "";
+        setTransferStatus(`${incoming.additions.length}件を取り込みました${skipped}${invited}。正本の日記は変更していません${held}。`);
       }
     } catch (error) {
       setTransferStatus(`取り込みませんでした: ${error.message}`, "error");
@@ -808,8 +991,10 @@
       }
       diary = data;
       loadLocalEntries();
+      loadParticipants();
       loadBranchSelections();
       loadHandoff();
+      loadTerminalAuthor();
       render();
       restoreDraft();
     })
