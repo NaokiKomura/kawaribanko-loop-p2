@@ -21,6 +21,9 @@ const missingTemplateSelectors = [...new Set(templateSelectors)].filter((selecto
 if (missingIds.length || missingTemplateSelectors.length) {
   throw new Error(`index.html と app.js の DOM 契約が壊れています: ${[...missingIds, ...missingTemplateSelectors].join(", ")}`);
 }
+if (index.indexOf('id="entries"') > index.indexOf('id="terminal-author"')) {
+  throw new Error("読む日記より先に端末設定が文書順へ戻った");
+}
 
 const diary = JSON.parse(fs.readFileSync(path.join(appDir, "data/diary.json"), "utf8"));
 const waitForRender = () => new Promise((resolve) => setImmediate(resolve));
@@ -45,6 +48,8 @@ const boot = async (storage = new Map(), sourceDiary = diary) => {
         else this.children.push(item);
       });
     }
+    // FakeNode は実ブラウザの select と違い replaceChildren 後も value を消さない。
+    // その副作用は再現できないので、アプリ側が値を復元していることだけをここで確かめる。
     replaceChildren(...items) { this.children = []; this.append(...items); }
     querySelector(selector) { return this.selectorMap?.[selector] || null; }
     setAttribute(name, value) { this.attributes = this.attributes || {}; this.attributes[name] = value; }
@@ -129,6 +134,11 @@ const main = async () => {
   if (!a.nodes["#turn-status"].textContent.includes("さんの番")) throw new Error("次の番が表示されなかった");
   if (!a.nodes["#cycle-nav"].children.length) throw new Error("サイクル別の目次が描画されなかった");
 
+  const roleStorage = new Map();
+  roleStorage.set("kawaribanko.terminal-author.v1", JSON.stringify(thirdWriter.id));
+  const role = await boot(roleStorage);
+  if (role.nodes["#entry-author"].value !== thirdWriter.id) throw new Error("保存した端末の役割を起動時の書き手欄へ反映しなかった");
+
   a.nodes["#entry-search"].value = "__render_check_token_7f3__";
   a.nodes["#entry-search"].listeners.input();
   if (entries.children.length !== 1) throw new Error("正本と切り離した検索結果を絞り込めなかった");
@@ -151,9 +161,17 @@ const main = async () => {
   if (!entries.children[0].textContent.includes("一致する日記はありません")) throw new Error("検索結果ゼロの説明が原因に合っていない");
   a.nodes["#entry-search"].value = "";
   a.nodes["#entry-search"].listeners.input();
+  a.nodes["#entries"].listeners.click({
+    target: { closest: (selector) => selector === "button[data-thread-start]" ? { dataset: { threadStart: "local-a" } } : null }
+  });
+  if (a.nodes["#thread-panel"].hidden || !a.nodes["#thread-list"].children.length) throw new Error("あるページを起点に続きだけを通読できなかった");
+  a.nodes["#close-thread"].listeners.click();
+  if (!a.nodes["#thread-panel"].hidden) throw new Error("通読ビューを閉じられなかった");
 
   const transferA = a.exported();
-  if (transferA.version !== 4 || !transferA.handoff || transferA.handoff.parentId !== "local-a" || Object.keys(transferA.branchSelections).length || !transferA.participants.length) throw new Error("version 4 の書き手付き引き継ぎが書き出されなかった");
+  if (transferA.version !== 5 || !transferA.handoff || transferA.handoff.parentId !== "local-a" || Object.keys(transferA.branchSelections).length || !transferA.participants.length || !Array.isArray(transferA.invitations)) throw new Error("version 5 の招待提案付き引き継ぎが書き出されなかった");
+  await role.importPayload(transferA);
+  if (role.nodes["#entry-author"].value !== thirdWriter.id) throw new Error("取り込み後に端末の役割から書き手欄が戻ってしまった");
   const legacy = await boot(new Map());
   await legacy.importPayload({ version: 1, entries: [transferA.entries[0]] });
   if (localEntries(legacy).length !== 1 || !legacy.nodes["#transfer-status"].textContent.includes("旧形式")) throw new Error("version 1 のバックアップを互換取り込みできなかった");
@@ -166,6 +184,9 @@ const main = async () => {
   const v3WithoutSelections = await boot(new Map());
   await v3WithoutSelections.importPayload({ version: 3, entries: [transferA.entries[0]], handoff: handoffA });
   if (localEntries(v3WithoutSelections).length !== 1) throw new Error("分岐選択の無い version 3 を互換取り込みできなかった");
+  const v4 = await boot(new Map());
+  await v4.importPayload({ version: 4, entries: [transferA.entries[0]], handoff: handoffA, branchSelections: {}, participants: transferA.participants });
+  if (localEntries(v4).length !== 1 || !v4.nodes["#turn-status"].textContent.includes(secondWriter.name)) throw new Error("version 4 の招待付き引き継ぎを互換取り込みできなかった");
   const b = await boot(new Map());
   await b.importPayload(transferA);
   if (localEntries(b).length !== 1 || !b.nodes["#turn-status"].textContent.includes(secondWriter.name)) throw new Error("引き継ぎを受けた端末で次の番を案内できなかった");
@@ -234,6 +255,13 @@ const main = async () => {
   if (!d.nodes["#turn-notice"].textContent.includes("採用中の枝")) throw new Error("別枝の handoff を保留した通知が描画されなかった");
   if (!d.nodes["#transfer-status"].textContent.includes("適用せず")) throw new Error("別枝の handoff を保留した取り込み結果が表示されなかった");
 
+  const parentChoice = JSON.parse(JSON.stringify(chosenTransfer));
+  parentChoice.handoff = { memberOrder: writers.map((member) => member.id), parentId: "local-a", nextAuthor: secondWriter.id };
+  await d.importPayload(parentChoice);
+  if (JSON.parse(d.storage.get("kawaribanko.handoff.v1") || "null")?.parentId !== cNew.id || !d.nodes["#turn-notice"].textContent.includes("内側")) {
+    throw new Error("採用中の枝の親そのものを指す handoff が選択を黙って無効化した");
+  }
+
   const conflicting = JSON.parse(JSON.stringify(transferB));
   conflicting.entries.find((entry) => entry.id === bNew.id).body = "同じ ID なのに本文だけ違う。";
   const beforeConflict = JSON.stringify(localEntries(a));
@@ -262,10 +290,10 @@ const main = async () => {
   };
   const invited = await boot(new Map());
   await invited.importPayload(invitePayload);
-  if (!invited.nodes["#entry-author"].children.some((option) => option.value === guest.id)) throw new Error("招待した4人目を投稿の書き手にできなかった");
-  invited.nodes["#terminal-author"].value = guest.id;
-  invited.nodes["#terminal-author"].listeners.change();
-  if (!invited.nodes["#turn-status"].textContent.includes("あなたの番です")) throw new Error("端末の役割が自分の番として案内されなかった");
+  if (invited.nodes["#entry-author"].children.some((option) => option.value === guest.id) || invited.nodes["#invitation-panel"].hidden) throw new Error("受け取った招待を端末の判断なしに参加させた");
+  const inviteAction = invited.nodes["#invitation-list"].children[0].children[2].children.find((button) => button.dataset.invitationStatus === "accepted");
+  invited.nodes["#invitation-list"].listeners.click({ target: { closest: (selector) => selector === "button[data-invitation-key][data-invitation-status]" ? inviteAction : null } });
+  if (!invited.nodes["#entry-author"].children.some((option) => option.value === guest.id)) throw new Error("保留した招待を明示的に参加へ変えられなかった");
   invited.nodes["#entry-author"].value = guest.id;
   invited.nodes["#entry-mood"].value = "🌿";
   invited.nodes["#entry-title"].value = "招待されて最初の頁";
@@ -275,19 +303,24 @@ const main = async () => {
   const guestTransfer = invited.exported();
   const origin = await boot(new Map());
   await origin.importPayload(guestTransfer);
-  if (!localEntries(origin).some((entry) => entry.author === guest.id) || !origin.nodes["#entry-author"].children.some((option) => option.value === guest.id)) throw new Error("招待先の投稿を招待元へ受け取れなかった");
+  if (!localEntries(origin).some((entry) => entry.author === guest.id) || origin.nodes["#entry-author"].children.some((option) => option.value === guest.id) || origin.nodes["#invitation-panel"].hidden) throw new Error("保留中の書き手の投稿を本文として受け取れなかった");
+  const originAccept = origin.nodes["#invitation-list"].children[0].children[2].children.find((button) => button.dataset.invitationStatus === "accepted");
+  origin.nodes["#invitation-list"].listeners.click({ target: { closest: (selector) => selector === "button[data-invitation-key][data-invitation-status]" ? originAccept : null } });
   const profileConflict = JSON.parse(JSON.stringify(guestTransfer));
   profileConflict.participants.find((member) => member.id === guest.id).name = "別のみか";
+  profileConflict.entries.push({
+    id: "local-profile-conflict-page", author: guest.id, date: "2000-01-03", mood: "🪴", title: "違う紹介状でも届く頁", body: "プロフィールが食い違っても本文は捨てない。", replyTo: baseReply, handoffParentId: null
+  });
   const beforeProfileConflict = JSON.stringify(localEntries(origin));
   await origin.importPayload(profileConflict);
-  if (JSON.stringify(localEntries(origin)) !== beforeProfileConflict || !origin.nodes["#transfer-status"].textContent.includes("プロフィール")) throw new Error("同じ ID の異なるプロフィールを原子的に拒否できなかった");
+  if (JSON.stringify(localEntries(origin)) === beforeProfileConflict || !localEntries(origin).some((entry) => entry.id === "local-profile-conflict-page") || origin.nodes["#invitation-list"].children.length < 1) throw new Error("異なるプロフィールの招待で、本文を捨てず判断材料を残せなかった");
 
   const futureDiary = JSON.parse(JSON.stringify(diary));
   futureDiary.entries.push({ id: "render-check-future", cycle: 999, author: firstWriter.id, date: "2999-12-31", mood: "🧪", title: "正本を一件増やす検証", body: "検証器は正本の個別の中身に依存しない。", replyTo: null });
   const future = await boot(new Map(), futureDiary);
   if (future.nodes["#entries"].children.length !== futureDiary.entries.length) throw new Error("正本を一件増やした検証用日記を描画できなかった");
 
-  process.stdout.write("render-check: DOM contract, data-independent source, reading filters, v1-v4 handoff, deletion, branch choice, role, invitation, roundtrip, and conflicts passed\n");
+  process.stdout.write("render-check: DOM contract, reading thread, data-independent source, v1-v5 handoff, deletion, branch choice, role, invitation decisions, roundtrip, and conflicts passed\n");
 };
 
 main().catch((error) => {

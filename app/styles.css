@@ -22,6 +22,7 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .member-chip { display: inline-flex; align-items: center; gap: .35rem; padding: .4rem .65rem; border: 1px solid color-mix(in srgb, var(--member-color) 38%, white); border-radius: 100px; background: color-mix(in srgb, var(--member-color) 10%, white); color: #443e38; font-size: .82rem; }
 
 .terminal-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(13rem, .55fr); gap: .8rem 1.2rem; align-items: end; margin-top: 1.15rem; padding: 1rem 1.1rem; border: 1px solid #d7d0c6; border-radius: .75rem; background: #fffdfa; }
+.terminal-glance { margin: 1rem 0 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
 .terminal-card h2 { margin: .25rem 0 .35rem; font-size: 1.1rem; }
 .terminal-note, .terminal-status, .invite p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.65; }
 .terminal-card > label, .invite-fields label { display: grid; gap: .35rem; color: #4c4640; font-size: .82rem; font-weight: 700; }
@@ -31,6 +32,14 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .invite summary { cursor: pointer; color: #4c4640; font-size: .86rem; font-weight: 700; }
 .invite p { margin: .55rem 0 .75rem; }
 .invite-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .65rem; margin-bottom: .7rem; }
+.invitation-panel { grid-column: 1 / -1; padding-top: .8rem; border-top: 1px dashed var(--line); }
+.invitation-panel h3 { margin: 0 0 .25rem; font-size: .95rem; }
+.invitation-panel > p, .invitation-source { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; }
+.invitation-list { display: grid; gap: .55rem; margin-top: .65rem; }
+.invitation-row { padding: .65rem .75rem; border: 1px solid var(--line); border-radius: .55rem; background: #fff; }
+.invitation-name { margin: 0 0 .25rem; color: var(--ink); font-size: .84rem; font-weight: 700; }
+.invitation-actions { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .55rem; }
+.invitation-actions button:disabled { cursor: default; opacity: .52; }
 
 .composer { margin-top: 3rem; padding: 1.5rem; border: 1px solid #e7c9be; border-radius: .9rem; background: #fff8f4; }
 .composer h2 { margin: .28rem 0 .45rem; font-size: 1.4rem; }
@@ -71,6 +80,15 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .branch-option[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); font-weight: 700; }
 
 .toolbar { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 1.5rem; padding: 1.8rem 0 1.25rem; }
+.thread-panel { margin: 0 0 2rem; padding: 1.1rem; border: 1px solid #d9c8b8; border-radius: .75rem; background: #fffdfa; }
+.thread-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.thread-heading h2 { margin: .25rem 0; font-size: 1.15rem; }
+.thread-status { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.6; }
+.thread-list { display: grid; gap: .75rem; margin: 1rem 0 0; padding: 0; list-style: none; }
+.thread-list li { padding: .8rem .9rem; border-left: 3px solid var(--accent); background: #fff; }
+.thread-list h3 { margin: .2rem 0 .45rem; font-size: 1rem; }
+.thread-meta { margin: 0; color: var(--muted); font-size: .77rem; }
+.thread-body { margin: 0; color: #4c4640; white-space: pre-wrap; line-height: 1.7; }
 .toolbar h2 { margin: .28rem 0 0; font-size: 1.45rem; }
 .reading-controls { display: grid; justify-items: end; gap: .65rem; }
 .search-label { display: grid; grid-template-columns: auto minmax(10rem, 16rem); align-items: center; gap: .45rem; color: var(--muted); font-size: .78rem; font-weight: 700; }
@@ -96,6 +114,7 @@ h1 { margin-bottom: .45rem; font-family: Georgia, "Hiragino Mincho ProN", serif;
 .entry-meta { font-weight: 700; }
 .entry-date { white-space: nowrap; }
 .entry-origin { display: inline-block; margin: 0 0 .7rem; padding: .22rem .5rem; border-radius: 99px; color: #873a29; background: #ffe3d8; font-size: .72rem; font-weight: 700; }
+.read-thread { margin-top: .85rem; font-size: .78rem; }
 .entry-mood { margin: 0 0 .25rem; font-size: 1.45rem; }
 .entry h3 { margin-bottom: .65rem; font-family: Georgia, "Hiragino Mincho ProN", serif; font-size: clamp(1.15rem, 3vw, 1.5rem); font-weight: 500; line-height: 1.45; }
 .entry-body { color: #4c4640; font-size: .96rem; line-height: 1.9; white-space: pre-wrap; }

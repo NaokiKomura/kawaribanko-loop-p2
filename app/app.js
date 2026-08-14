@@ -4,10 +4,11 @@
   const DATA_URL = "data/diary.json";
   const STORAGE_KEY = "kawaribanko.local-entries.v1";
   const DRAFT_KEY = "kawaribanko.draft.v1";
-  const TRANSFER_VERSION = 4;
+  const TRANSFER_VERSION = 5;
   const HANDOFF_KEY = "kawaribanko.handoff.v1";
   const BRANCH_SELECTION_KEY = "kawaribanko.branch-selections.v1";
   const PARTICIPANT_KEY = "kawaribanko.participants.v1";
+  const INVITATION_KEY = "kawaribanko.invitations.v1";
   const TERMINAL_AUTHOR_KEY = "kawaribanko.terminal-author.v1";
   const limits = { mood: 8, title: 80, body: 1200 };
   const elements = {
@@ -42,12 +43,19 @@
     cycleNav: document.querySelector("#cycle-nav"),
     terminalAuthor: document.querySelector("#terminal-author"),
     terminalStatus: document.querySelector("#terminal-status"),
+    terminalGlance: document.querySelector("#terminal-glance"),
     participantId: document.querySelector("#participant-id"),
     participantName: document.querySelector("#participant-name"),
     participantEmoji: document.querySelector("#participant-emoji"),
     participantColor: document.querySelector("#participant-color"),
     inviteParticipant: document.querySelector("#invite-participant"),
-    inviteStatus: document.querySelector("#invite-status")
+    inviteStatus: document.querySelector("#invite-status"),
+    invitationPanel: document.querySelector("#invitation-panel"),
+    invitationList: document.querySelector("#invitation-list"),
+    threadPanel: document.querySelector("#thread-panel"),
+    threadStatus: document.querySelector("#thread-status"),
+    threadList: document.querySelector("#thread-list"),
+    closeThread: document.querySelector("#close-thread")
   };
 
   let diary = null;
@@ -58,7 +66,9 @@
   let branchSelections = {};
   let handoffNotice = "";
   let participants = [];
+  let invitations = [];
   let terminalAuthor = null;
+  let threadStartId = null;
 
   const formatDate = (date) => {
     const parsed = new Date(`${date}T00:00:00`);
@@ -143,6 +153,21 @@
     .filter((key) => participantIdentity(left)[key] !== participantIdentity(right)[key]);
 
   const normalizedParticipant = (member) => ({ id: member.id, ...participantIdentity(member) });
+  const profileKey = (member) => `${member.id}\u0000${member.name.trim()}\u0000${member.emoji.trim()}\u0000${member.color.toLowerCase()}`;
+
+  const isInvitation = (value) => Boolean(value && isParticipant(value)
+    && ["accepted", "pending", "rejected"].includes(value.status)
+    && Array.isArray(value.sources));
+
+  const normalizedInvitation = (value) => ({
+    ...normalizedParticipant(value),
+    status: ["accepted", "pending", "rejected"].includes(value.status) ? value.status : "pending",
+    sources: value.sources.filter((source) => source && typeof source === "object").map((source) => ({
+      exportedAt: typeof source.exportedAt === "string" ? source.exportedAt : null,
+      pageIds: Array.isArray(source.pageIds) ? source.pageIds.filter((id) => typeof id === "string") : [],
+      authorIds: Array.isArray(source.authorIds) ? source.authorIds.filter((id) => typeof id === "string") : []
+    }))
+  });
 
   const loadParticipants = () => {
     const stored = safeRead(PARTICIPANT_KEY, []);
@@ -155,6 +180,28 @@
   const saveParticipants = (next) => {
     if (!safeWrite(PARTICIPANT_KEY, next)) return false;
     participants = next;
+    return true;
+  };
+
+  const loadInvitations = () => {
+    const stored = safeRead(INVITATION_KEY, []);
+    const known = new Set();
+    invitations = Array.isArray(stored) ? stored.filter(isInvitation).map(normalizedInvitation)
+      .filter((invitation) => !diary.members.some((member) => member.id === invitation.id)
+        && !known.has(profileKey(invitation)) && Boolean(known.add(profileKey(invitation)))) : [];
+    // cycle 6 までにこの端末で招待済みだった人は、以前の約束どおり参加済みとして移行する。
+    participants.forEach((member) => {
+      const key = profileKey(member);
+      if (!known.has(key)) {
+        invitations.push({ ...normalizedParticipant(member), status: "accepted", sources: [] });
+        known.add(key);
+      }
+    });
+  };
+
+  const saveInvitations = (next) => {
+    if (!safeWrite(INVITATION_KEY, next)) return false;
+    invitations = next;
     return true;
   };
 
@@ -278,22 +325,35 @@
   const handoffSelectionConflict = (candidate, selections = branchSelections, entries = allKnownEntries()) => {
     if (!candidate) return false;
     const graph = branchGraph(entries);
-    let current = graph.byId.get(candidate.parentId);
-    const visited = new Set();
-    while (current && !visited.has(current.id)) {
-      visited.add(current.id);
-      const parentId = current.handoffParentId;
-      if (parentId && selections[parentId] && selections[parentId] !== current.id) return true;
-      current = graph.byId.get(parentId);
-    }
-    return false;
+    const isInside = (entryId, rootId) => {
+      let current = graph.byId.get(entryId);
+      const visited = new Set();
+      while (current && !visited.has(current.id)) {
+        if (current.id === rootId) return true;
+        visited.add(current.id);
+        current = graph.byId.get(current.handoffParentId);
+      }
+      return false;
+    };
+    // 「兄弟枝ではない」だけでは足りない。分岐の親やその上流も、選んだ枝の
+    // 内側ではないので、番をそこへ戻す handoff はこの端末の選択を無効化してしまう。
+    return Object.values(selections).some((selectedRoot) => !isInside(candidate.parentId, selectedRoot));
   };
 
-  const memberFor = (id) => members().find((member) => member.id === id) || {
+  const memberFor = (id) => members().find((member) => member.id === id)
+    || invitations.find((invitation) => invitation.id === id) || {
     id,
     name: "不明な書き手",
     emoji: "✏️",
     color: "#746d65"
+  };
+
+  const invitationState = (id) => {
+    if (members().some((member) => member.id === id)) return "accepted";
+    const matching = invitations.filter((invitation) => invitation.id === id);
+    if (matching.some((invitation) => invitation.status === "pending")) return "pending";
+    if (matching.some((invitation) => invitation.status === "rejected")) return "rejected";
+    return null;
   };
 
   const renderMembers = () => {
@@ -309,6 +369,8 @@
   };
 
   const renderAuthors = () => {
+    // 実ブラウザの select は replaceChildren で先頭に戻るため、値を明示的に戻す。
+    const previous = elements.author.value || terminalAuthor || "";
     const fragment = document.createDocumentFragment();
     writers().forEach((member) => {
       const option = document.createElement("option");
@@ -317,6 +379,7 @@
       fragment.append(option);
     });
     elements.author.replaceChildren(fragment);
+    elements.author.value = writers().some((member) => member.id === previous) ? previous : writers()[0]?.id || "";
   };
 
   const renderReplyOptions = () => {
@@ -407,6 +470,43 @@
     elements.terminalStatus.textContent = member
       ? `この端末は ${member.emoji} ${member.name}として名乗っています。`
       : "この端末は役割を名乗っていません。";
+    elements.terminalGlance.textContent = member
+      ? `この端末: ${member.emoji} ${member.name}として開いています。設定は日記の後ろにあります。`
+      : "この端末は役割を名乗っていません。設定は日記の後ろにあります。";
+  };
+
+  const renderInvitations = () => {
+    const visible = invitations.filter((invitation) => invitation.status !== "accepted" || !participants.some((member) => profileKey(member) === profileKey(invitation)));
+    elements.invitationPanel.hidden = visible.length === 0;
+    const fragment = document.createDocumentFragment();
+    visible.forEach((invitation) => {
+      const row = document.createElement("article");
+      row.className = "invitation-row";
+      const title = document.createElement("p");
+      title.className = "invitation-name";
+      title.textContent = `${invitation.emoji} ${invitation.name}（${invitation.id}）— ${({ accepted: "参加済み", pending: "保留中", rejected: "拒否済み" }[invitation.status])}`;
+      const source = document.createElement("p");
+      source.className = "invitation-source";
+      const latest = invitation.sources.at(-1);
+      source.textContent = latest
+        ? `出所: ${latest.exportedAt || "日時のない"} ファイル${latest.pageIds.length ? `／ページ ${latest.pageIds.join("、")}` : "（紹介ページなし）"}${latest.authorIds.length ? `／書き手 ${latest.authorIds.join("、")}` : ""}`
+        : "出所: この端末で作った招待";
+      const actions = document.createElement("div");
+      actions.className = "invitation-actions";
+      [["accepted", "参加を認める"], ["pending", "保留にする"], ["rejected", "拒否する"]].forEach(([status, label]) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "quiet-action";
+        button.dataset.invitationKey = profileKey(invitation);
+        button.dataset.invitationStatus = status;
+        button.disabled = invitation.status === status;
+        button.textContent = label;
+        actions.append(button);
+      });
+      row.append(title, source, actions);
+      fragment.append(row);
+    });
+    elements.invitationList.replaceChildren(fragment);
   };
 
   const renderBranches = () => {
@@ -496,7 +596,10 @@
       date.textContent = formatDate(entry.date);
       if (entry.local) {
         origin.hidden = false;
-        origin.textContent = entry.origin === "imported" ? "ほかの端末から取り込んだ投稿" : "このブラウザだけの投稿";
+        const state = invitationState(entry.author);
+        origin.textContent = entry.origin === "imported"
+          ? `ほかの端末から取り込んだ投稿${state === "pending" ? "（参加を保留している書き手）" : state === "rejected" ? "（参加を拒否している書き手）" : ""}`
+          : "このブラウザだけの投稿";
       }
       mood.textContent = entry.mood || "✏️";
       mood.setAttribute("aria-label", `今日の気分: ${entry.mood || "未設定"}`);
@@ -533,6 +636,8 @@
         actions.hidden = false;
         remove.dataset.entryId = entry.id;
       }
+      const thread = node.querySelector(".read-thread");
+      thread.dataset.threadStart = entry.id;
       fragment.append(node);
     });
 
@@ -571,6 +676,59 @@
     elements.localBinList.replaceChildren(fragment);
   };
 
+  const threadContinuation = (startId) => {
+    const byId = new Map(allEntries().map((entry) => [entry.id, entry]));
+    const path = [];
+    let current = byId.get(startId);
+    let stopped = "";
+    const visited = new Set();
+    while (current && !visited.has(current.id)) {
+      path.push(current);
+      visited.add(current.id);
+      const children = allEntries().filter((entry) => (entry.replyTo === current.id || entry.handoffParentId === current.id) && !visited.has(entry.id));
+      if (children.length === 0) break;
+      if (children.length === 1) {
+        [current] = children;
+        continue;
+      }
+      const selected = branchSelections[current.id];
+      const chosen = selected && children.find((entry) => entry.id === selected || branchRootOnPath(entry.id, current.id) === selected);
+      if (chosen) {
+        current = chosen;
+        continue;
+      }
+      stopped = "ここで複数の続きに分かれます。端末の選択がないため、どれかを推測して続けません。";
+      break;
+    }
+    return { path, stopped };
+  };
+
+  const renderThread = () => {
+    if (!threadStartId) {
+      elements.threadPanel.hidden = true;
+      return;
+    }
+    const { path, stopped } = threadContinuation(threadStartId);
+    elements.threadPanel.hidden = path.length === 0;
+    elements.threadStatus.textContent = `${path.length}ページを一続きで表示しています。${stopped}`;
+    const fragment = document.createDocumentFragment();
+    path.forEach((entry) => {
+      const item = document.createElement("li");
+      const member = memberFor(entry.author);
+      const meta = document.createElement("p");
+      meta.className = "thread-meta";
+      meta.textContent = `${member.emoji} ${member.name} · ${formatDate(entry.date)}`;
+      const title = document.createElement("h3");
+      title.textContent = entry.title;
+      const body = document.createElement("p");
+      body.className = "thread-body";
+      body.textContent = entry.body;
+      item.append(meta, title, body);
+      fragment.append(item);
+    });
+    elements.threadList.replaceChildren(fragment);
+  };
+
   const render = () => {
     elements.title.textContent = diary.title || "かわりばんこ";
     document.title = `${elements.title.textContent} — ${diary.subtitle || "交換日記"}`;
@@ -578,10 +736,12 @@
     renderMembers();
     renderAuthors();
     renderTerminal();
+    renderInvitations();
     renderFilters();
     renderEntries();
     renderTurn();
     renderBranches();
+    renderThread();
     elements.entryRegion.setAttribute("aria-busy", "false");
   };
 
@@ -657,6 +817,7 @@
     renderEntries();
     renderTurn();
     renderBranches();
+    renderThread();
     if (!handoffSaved) setTransferStatus("投稿は保存しましたが、次の番の保存には失敗しました。次の受け渡し前に確認してください。", "error");
     const newEntry = document.querySelector(`#entry-${entry.id}`);
     if (newEntry) newEntry.focus({ preventScroll: true });
@@ -696,7 +857,8 @@
       return;
     }
     const next = [...participants, normalizedParticipant(candidate)];
-    if (!saveParticipants(next)) {
+    const invitation = { ...normalizedParticipant(candidate), status: "accepted", sources: [] };
+    if (!saveParticipants(next) || !saveInvitations([...invitations, invitation])) {
       elements.inviteStatus.textContent = "招待をこの端末へ保存できませんでした。";
       return;
     }
@@ -705,8 +867,43 @@
     renderMembers();
     renderAuthors();
     renderTerminal();
+    renderInvitations();
     renderFilters();
     renderTurn();
+  });
+
+  elements.invitationList.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-invitation-key][data-invitation-status]");
+    if (!button) return;
+    const invitation = invitations.find((candidate) => profileKey(candidate) === button.dataset.invitationKey);
+    if (!invitation) return;
+    const status = button.dataset.invitationStatus;
+    let nextParticipants = participants.filter((member) => member.id !== invitation.id);
+    if (status === "accepted") nextParticipants = [...nextParticipants, normalizedParticipant(invitation)];
+    const nextInvitations = invitations.map((candidate) => ({
+      ...candidate,
+      // 同じ ID の別プロフィールは、選んだものだけを参加済みにする。
+      status: candidate.id === invitation.id ? (profileKey(candidate) === profileKey(invitation) ? status : candidate.status === "accepted" ? "pending" : candidate.status) : candidate.status
+    }));
+    if (!safeWrite(PARTICIPANT_KEY, nextParticipants) || !safeWrite(INVITATION_KEY, nextInvitations)) {
+      setStatus("招待の判断をこの端末へ保存できませんでした。", "error");
+      return;
+    }
+    participants = nextParticipants;
+    invitations = nextInvitations;
+    if (terminalAuthor && !writers().some((member) => member.id === terminalAuthor)) {
+      terminalAuthor = null;
+      safeRemove(TERMINAL_AUTHOR_KEY);
+    }
+    handoffNotice = "招待の判断はこの端末だけに保存しました。受け取った番は、参加を認めた書き手だけで案内します。";
+    renderMembers();
+    renderAuthors();
+    renderTerminal();
+    renderInvitations();
+    renderFilters();
+    renderEntries();
+    renderTurn();
+    renderBranches();
   });
 
   elements.filters.addEventListener("click", (event) => {
@@ -753,9 +950,21 @@
         renderEntries();
         renderTurn();
         renderBranches();
+        renderThread();
       }
       return;
     }
+    const thread = event.target.closest("button[data-thread-start]");
+    if (thread) {
+      threadStartId = thread.dataset.threadStart;
+      renderThread();
+      return;
+    }
+  });
+
+  elements.closeThread.addEventListener("click", () => {
+    threadStartId = null;
+    renderThread();
   });
 
   elements.cycleNav.addEventListener("click", (event) => {
@@ -772,6 +981,7 @@
       renderEntries();
       renderTurn();
       renderBranches();
+      renderThread();
     }
   });
 
@@ -791,6 +1001,7 @@
       : "枝の選択は保存しましたが、次の番の保存には失敗しました。";
     renderTurn();
     renderBranches();
+    renderThread();
   });
 
   const setTransferStatus = (message, kind = "") => {
@@ -828,30 +1039,56 @@
   }[field]);
 
   const validateImportedEntries = (data) => {
-    if (!data || ![1, 2, 3, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
+    if (!data || ![1, 2, 3, 4, TRANSFER_VERSION].includes(data.version) || !Array.isArray(data.entries)) {
       throw new Error("対応していないファイル形式です。");
     }
     const knownEntries = new Map([...diary.entries, ...localEntries].map((entry) => [entry.id, entry]));
     const importEntries = new Map();
-    const knownProfiles = new Map(members().map((member) => [member.id, member]));
-    const importedProfiles = new Map();
-    const participantAdditions = [];
-    if (data.version === TRANSFER_VERSION) {
+    const knownProfiles = new Map([...members(), ...invitations].map((member) => [member.id, member]));
+    const importedProfiles = [];
+    const importedProfileKeys = new Set();
+    const sourceFor = (member, supplied = []) => ({
+      exportedAt: typeof data.exportedAt === "string" ? data.exportedAt : null,
+      pageIds: data.entries.filter((entry) => entry?.author === member.id).map((entry) => entry.id),
+      authorIds: [...new Set(data.entries.filter((entry) => entry?.author === member.id).map((entry) => entry.author)), data.exportedBy, ...supplied].filter((id, index, ids) => typeof id === "string" && ids.indexOf(id) === index)
+    });
+    const addProfile = (member, suppliedSources = []) => {
+      if (!isParticipant(member)) throw new Error("招待した書き手の情報が正しくありません。何も取り込みませんでした。");
+      const candidate = normalizedParticipant(member);
+      const base = diary.members.find((known) => known.id === candidate.id);
+      if (base) {
+        if (participantDifferences(base, candidate).length) throw new Error(`書き手ID「${candidate.id}」は正本のプロフィールと食い違います。何も取り込みませんでした。`);
+        return;
+      }
+      const key = profileKey(candidate);
+      if (!importedProfileKeys.has(key)) {
+        importedProfileKeys.add(key);
+        importedProfiles.push({ ...candidate, status: "pending", sources: [sourceFor(candidate)] });
+      }
+      const existing = invitations.find((invitation) => profileKey(invitation) === key);
+      if (existing) importedProfiles.find((invitation) => profileKey(invitation) === key).status = existing.status;
+      suppliedSources.filter((source) => source && typeof source === "object").forEach((source) => {
+        const target = importedProfiles.find((invitation) => profileKey(invitation) === key);
+        target.sources.push({
+          exportedAt: typeof source.exportedAt === "string" ? source.exportedAt : null,
+          pageIds: Array.isArray(source.pageIds) ? source.pageIds.filter((id) => typeof id === "string") : [],
+          authorIds: Array.isArray(source.authorIds) ? source.authorIds.filter((id) => typeof id === "string") : []
+        });
+      });
+    };
+    if (data.version >= 4) {
       if (!Array.isArray(data.participants)) throw new Error("招待した書き手の情報が正しくありません。何も取り込みませんでした。");
       data.participants.forEach((member, index) => {
-        if (!isParticipant(member)) throw new Error(`${index + 1}人目の書き手情報が正しくありません。何も取り込みませんでした。`);
-        const candidate = normalizedParticipant(member);
-        const previous = knownProfiles.get(candidate.id) || importedProfiles.get(candidate.id);
-        if (previous) {
-          const differences = participantDifferences(previous, candidate);
-          if (differences.length) throw new Error(`書き手ID「${candidate.id}」は ${differences.map((field) => ({ name: "表示名", emoji: "絵文字", color: "色" }[field])).join("・")} が既存のプロフィールと食い違います。何も取り込みませんでした。`);
-          return;
-        }
-        importedProfiles.set(candidate.id, candidate);
-        participantAdditions.push(candidate);
+        try { addProfile(member); } catch (error) { throw new Error(`${index + 1}人目の${error.message}`); }
       });
     }
-    const availableAuthors = new Set([...knownProfiles.keys(), ...importedProfiles.keys()]);
+    if (data.version === TRANSFER_VERSION) {
+      if (!Array.isArray(data.invitations)) throw new Error("招待の提案情報が正しくありません。何も取り込みませんでした。");
+      data.invitations.forEach((invitation, index) => {
+        try { addProfile(invitation, invitation?.sources); } catch (error) { throw new Error(`${index + 1}件目の${error.message}`); }
+      });
+    }
+    const availableAuthors = new Set([...knownProfiles.keys(), ...importedProfiles.map((member) => member.id)]);
     const additions = [];
     const reencountered = [];
     data.entries.forEach((entry, index) => {
@@ -888,7 +1125,8 @@
       }
     });
     const importedHandoff = data.version >= 2 ? data.handoff : null;
-    const combinedOrder = [...members(), ...participantAdditions].filter((member) => member.id !== "owner").map((member) => member.id);
+    const combinedOrder = [...members(), ...importedProfiles].filter((member) => member.id !== "owner")
+      .map((member) => member.id).filter((id, index, ids) => ids.indexOf(id) === index);
     if (data.version >= 2 && !isHandoff(importedHandoff, knownIds, data.version, combinedOrder)) {
       throw new Error("引き継ぎ情報が正しくありません。何も取り込みませんでした。");
     }
@@ -909,7 +1147,8 @@
     }
     return {
       additions: additions.map(({ entry }) => entry), reencountered, handoff: importedHandoff,
-      branchSelections: importedSelections, participants: participantAdditions, legacy: data.version === 1
+      branchSelections: importedSelections, invitations: importedProfiles, legacy: data.version === 1,
+      handoffEligible: !importedHandoff || importedHandoff.memberOrder.every((id) => memberOrder().includes(id))
     };
   };
 
@@ -918,10 +1157,13 @@
     const payload = {
       version: TRANSFER_VERSION,
       exportedAt: new Date().toISOString(),
+      exportedBy: terminalAuthor,
       entries: localEntries.map(exportableEntry),
       handoff: outgoingHandoff,
       branchSelections: validBranchSelections(branchSelections),
-      participants: writers().map(normalizedParticipant)
+      participants: writers().map(normalizedParticipant),
+      // 受諾・保留・拒否は端末の判断なので送らない。プロフィールと出所だけを提案として渡す。
+      invitations: invitations.map(({ id, name, emoji, color, sources }) => ({ id, name, emoji, color, sources }))
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -930,7 +1172,7 @@
     link.download = `kawaribanko-${today()}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    setTransferStatus(`${localEntries.length}件の端末内投稿、書き手、次の番を version 4 で書き出しました。`);
+    setTransferStatus(`${localEntries.length}件の端末内投稿、招待の提案、次の番を version 5 で書き出しました。`);
   });
 
   elements.importLocal.addEventListener("click", async () => {
@@ -943,9 +1185,17 @@
       const data = JSON.parse(await file.text());
       const incoming = validateImportedEntries(data);
       const next = [...localEntries, ...incoming.additions];
-      const nextParticipants = [...participants, ...incoming.participants];
-      if (incoming.participants.length && !saveParticipants(nextParticipants)) {
-        setTransferStatus("招待した書き手の保存に失敗したため、何も取り込みませんでした。", "error");
+      const invitationByKey = new Map(invitations.map((invitation) => [profileKey(invitation), invitation]));
+      incoming.invitations.forEach((invitation) => {
+        const previous = invitationByKey.get(profileKey(invitation));
+        if (previous) {
+          const sources = [...previous.sources, ...invitation.sources];
+          invitationByKey.set(profileKey(invitation), { ...previous, sources: sources.filter((source, index, list) => list.findIndex((other) => JSON.stringify(other) === JSON.stringify(source)) === index) });
+        } else invitationByKey.set(profileKey(invitation), invitation);
+      });
+      const nextInvitations = [...invitationByKey.values()];
+      if (incoming.invitations.length && !saveInvitations(nextInvitations)) {
+        setTransferStatus("招待の提案を保存に失敗したため、何も取り込みませんでした。", "error");
         return;
       }
       if (!safeWrite(STORAGE_KEY, next)) return;
@@ -954,25 +1204,29 @@
       const selectionsSaved = Object.keys(missingSelections).length === 0 || saveBranchSelections({ ...branchSelections, ...missingSelections });
       const mergedSelections = { ...branchSelections, ...missingSelections };
       const handoffConflictsWithChoice = incoming.handoff && handoffSelectionConflict(incoming.handoff, mergedSelections, [...diary.entries, ...next]);
+      const handoffWaitsForInvitation = incoming.handoff && !incoming.handoffEligible;
       if (incoming.handoff && !handoffConflictsWithChoice) handoffNotice = "";
-      if (handoffConflictsWithChoice) handoffNotice = "採用中の枝と食い違う受け渡しだったため、次の番はこの端末で選んだ枝のままにしました。";
-      const handoffSaved = !incoming.handoff || handoffConflictsWithChoice || saveHandoff(incoming.handoff);
+      if (handoffConflictsWithChoice) handoffNotice = "採用中の枝の内側を指さない受け渡しだったため、次の番はこの端末で選んだ枝のままにしました。";
+      if (handoffWaitsForInvitation) handoffNotice = "参加を保留・拒否している書き手を含む受け渡しだったため、ページだけ受け取り、次の番はこの端末のままにしました。";
+      const handoffSaved = !incoming.handoff || handoffConflictsWithChoice || handoffWaitsForInvitation || saveHandoff(incoming.handoff);
       elements.importFile.value = "";
       renderMembers();
       renderAuthors();
       renderTerminal();
+      renderInvitations();
       renderFilters();
       renderEntries();
       renderTurn();
       renderBranches();
+      renderThread();
       if (!handoffSaved || !selectionsSaved) {
         setTransferStatus(`${incoming.additions.length}件は取り込みましたが、${!handoffSaved ? "次の番" : "分岐の選択"}の保存には失敗しました。`, "error");
       } else if (incoming.legacy) {
         setTransferStatus(`${incoming.additions.length}件を旧形式から取り込みました。次の番はこの端末で推定しています。`);
       } else {
         const skipped = incoming.reencountered.length ? `、再会した${incoming.reencountered.length}件はそのままにしました` : "";
-        const invited = incoming.participants.length ? `、${incoming.participants.length}人の書き手を招待しました` : "";
-        const held = handoffConflictsWithChoice ? "。この端末で採用中の枝と食い違うため、受け取った次の番は適用せず、ここで選んだ枝を保ちました" : "";
+        const invited = incoming.invitations.length ? `、${incoming.invitations.length}件の招待を保留で受け取りました` : "";
+        const held = handoffConflictsWithChoice ? "。この端末で採用中の枝の内側を指さないため、受け取った次の番は適用せず、ここで選んだ枝を保ちました" : handoffWaitsForInvitation ? "。参加を認めていない書き手を含むため、受け取った次の番は適用しませんでした" : "";
         setTransferStatus(`${incoming.additions.length}件を取り込みました${skipped}${invited}。正本の日記は変更していません${held}。`);
       }
     } catch (error) {
@@ -992,6 +1246,7 @@
       diary = data;
       loadLocalEntries();
       loadParticipants();
+      loadInvitations();
       loadBranchSelections();
       loadHandoff();
       loadTerminalAuthor();
